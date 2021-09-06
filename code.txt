@@ -1,0 +1,2206 @@
+fix(clin_immune_phyno_status)
+clin_immune_phyno_ER_status<-clin_immune_phyno_status[clin_immune_phyno_status$ER_Status_nature2012=="Negative"|clin_immune_phyno_status$ER_Status_nature2012=="Positive",]
+clin_immune_phyno_PR_status<-clin_immune_phyno_status[clin_immune_phyno_status$PR_Status_nature2012=="Negative"|clin_immune_phyno_status$PR_Status_nature2012=="Positive",]
+clin_immune_phyno_HER2_status<-clin_immune_phyno_status[clin_immune_phyno_status$HER2_Final_Status_nature2012=="Negative"|clin_immune_phyno_status$HER2_Final_Status_nature2012=="Positive",]
+clin_immune_phyno_fenxin_status<-clin_immune_phyno_status[clin_immune_phyno_status$PAM50Call_RNAseq=="Basal"|
+                                                            clin_immune_phyno_status$PAM50Call_RNAseq=="Her2"|
+                                                            clin_immune_phyno_status$PAM50Call_RNAseq=="LumA"|
+                                                            clin_immune_phyno_status$PAM50Call_RNAseq=="LumB",]
+
+clin_immune_phyno_M_status<-clin_immune_phyno_status[clin_immune_phyno_status$pathologic_M=="M0"|clin_immune_phyno_status$pathologic_M=="M1",]
+clin_immune_phyno_N_status<-clin_immune_phyno_status[clin_immune_phyno_status$pathologic_N!="NX",]
+clin_immune_phyno_T_status<-clin_immune_phyno_status[clin_immune_phyno_status$pathologic_T!="TX",]
+clin_immune_phyno_stage_status<-clin_immune_phyno_status[clin_immune_phyno_status$pathologic_stage!="X",]
+
+
+
+clin_immune_phyno_status_fix<-clin_immune_phyno_status
+save(clin_immune_phyno_ER_status,clin_immune_phyno_PR_status,clin_immune_phyno_HER2_status,clin_immune_phyno_fenxin_status,
+     clin_immune_phyno_M_status,clin_immune_phyno_N_status,clin_immune_phyno_T_status,clin_immune_phyno_stage_status,file="clin_fenxin_wanzheng.Rdata")
+save(clin_immune_phyno_status_fix,file = "clin_immune_phyno_status_fix.Rdata")
+
+getwd()
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load(file = "clin_immune_phyno_status_fix.Rdata")
+##发现很多年龄信息丢失，故补充年龄信息
+all_cli<-read.delim2(file = "D:\\大数据和原始数据资料\\通用数据库及网站\\TCGA所有样本的生存信息\\Survival_SupplementalTable_S1_20171025_xena_sp")
+all_cli_BRCA<-all_cli[all_cli$cancer.type.abbreviation=="BRCA",]
+##提取肿瘤样本数据
+all_cli_BRCA<-all_cli_BRCA[substr(all_cli_BRCA$sample,14,15)=="01",]
+cc1<-all_cli_BRCA[,c(2,4,26:33)]
+cc1<-cc1[cc1$X_PATIENT%in%clin_immune_phyno_status_fix$sample_id,]
+colnames(cc1)[1]<-"sample_id"
+clin_immune_phyno_status_fix<-merge(clin_immune_phyno_status_fix,cc1,by="sample_id")
+clin_immune_phyno_status_fix<-clin_immune_phyno_status_fix[,-c(12,20,21)]
+##1.将临床表型文件（clin_immune_phyno_status_fix）根据免疫评分和基质评分分为高低两组 #根据中位值进行划分，
+#在后面clin_immune_phyno_status_fix4数据中是根据cutoff值划分的
+ifelse(clin_immune_phyno_status_fix$immune_score>=median(clin_immune_phyno_status_fix$immune_score),"High","low")
+
+clin_immune_phyno_status_fix$immune<-as.vector(ifelse(clin_immune_phyno_status_fix$immune_score>=median(clin_immune_phyno_status_fix$immune_score),"High","low"))
+clin_immune_phyno_status_fix$strma<-as.vector(ifelse(clin_immune_phyno_status_fix$strmal_score>=median(clin_immune_phyno_status_fix$strmal_score),"High","low"))
+table(clin_immune_phyno_status_fix$immune)
+table(clin_immune_phyno_status_fix$strma)
+#将肿瘤突变负荷数据加上去试试看
+library(UCSCXenaShiny)
+data("tmb_data")
+all_tumor_TMB<-tmb_data
+
+BRCA_tmb<-all_tumor_TMB[all_tumor_TMB$Cohort=="BRCA",]
+BRCA_tmb<-BRCA_tmb[!duplicated(BRCA_tmb$Patient_ID),]
+BRCA_tmb<-BRCA_tmb[BRCA_tmb$Non_silent_per_Mb!=0,]
+save(all_tumor_TMB,BRCA_tmb,file = "all_tumor_TMB.Rdata")
+clin_immune_phyno_status_fix$sample_id<-substr(clin_immune_phyno_status_fix$sample_id,1,12)
+table(duplicated(substr(clin_immune_phyno_status_fix$sample_id,1,12)))
+colnames(BRCA_tmb)[2]<-"sample_id"
+BRCA_tmb1<-BRCA_tmb[BRCA_tmb$sample_id%in%clin_immune_phyno_status_fix$sample_id,]
+clin_immune_phyno_status_fix111<-clin_immune_phyno_status_fix[clin_immune_phyno_status_fix$sample_id%in%BRCA_tmb1$sample_id,]
+
+
+###2.计算免疫评分和基质评分高低和生存的关系（k-m生存曲线）#后面加上肿瘤突变负荷数据
+library(survival)
+library(survminer)
+#clin_immune_phyno_status_fix$immune<-factor(clin_immune_phyno_status_fix$immune,labels=c("low","High"))
+#clin_immune_phyno_status_fix$strma<-factor(clin_immune_phyno_status_fix$strma,labels=c("low","High"))
+class(clin_immune_phyno_status_fix$immune)
+class(clin_immune_phyno_status_fix$life_time)
+class(clin_immune_phyno_status_fix$status)
+
+
+clin_immune_phyno_status_fix$life_time<-as.numeric(as.character((clin_immune_phyno_status_fix$life_time)))##注意因子变成数字不是直接转变，而是先转成字符
+clin_immune_phyno_status_fix$life_time<-clin_immune_phyno_status_fix$life_time/365
+clin_immune_phyno_status_fix$status<-as.numeric(as.character((clin_immune_phyno_status_fix$status)))#####注意将状态转成数字
+colnames(clin_immune_phyno_status_fix)
+clin_immune_phyno_status_fix1<-clin_immune_phyno_status_fix
+save(clin_immune_phyno_status_fix1,file = "clin_immune_phyno_status_fix1.Rdata")
+
+load(file = "clin_immune_phyno_status_fix1.Rdata")
+#删除M，N,T和ER,PR,HER2中不完整的数据
+fix1<-clin_immune_phyno_status_fix1
+table(fix1$pathologic_M)
+table(fix1$pathologic_N)
+table(fix1$pathologic_T)
+table(fix1$pathologic_stage)
+library(dplyr)
+fix1<-fix1%>%filter(pathologic_M!="MX")%>%
+  filter(pathologic_N!="NX")%>%
+  filter(pathologic_T!="TX")%>%
+  filter(pathologic_stage!="X")
+
+table(fix1$ER_Status_nature2012)
+table(fix1$PR_Status_nature2012)
+table(fix1$HER2_Final_Status_nature2012)
+fix2<-fix1%>%filter(ER_Status_nature2012=="Negative"|ER_Status_nature2012=="Positive")%>%
+  filter(PR_Status_nature2012=="Negative"|PR_Status_nature2012=="Positive")%>%
+  filter(HER2_Final_Status_nature2012=="Negative"|HER2_Final_Status_nature2012=="Positive")
+allclinical1<-fix1
+allclinical2<-fix2
+save(allclinical1,allclinical2,file = "allclinical.Rdata")
+
+###首先做单因素多因素分析，看免疫评分，基质评分和estimate评分是否与生存有关
+##后面用allclinical2做分析是发现TP53与生存无关，估计是删除太多样本了，故选择allclinical1做分析
+library(survival)
+library(survivalROC)
+#加入肿瘤突变负荷数据
+cc2<-intersect(BRCA_tmb$sample_id,allclinical1$sample_id)
+cc3<-allclinical1[allclinical1$sample_id%in%cc2,]
+cc4<-BRCA_tmb[BRCA_tmb$sample_id%in%cc2,]
+cc5<-merge(cc3,cc4,by="sample_id")
+cc6<-cc5[,-c(25:27)]
+shapiro.test(cc6$Non_silent_per_Mb)##不符合正态分布
+cc6$TMB<-as.vector(ifelse(cc6$Non_silent_per_Mb>median(cc6$Non_silent_per_Mb),"High","low"))
+save(cc6,file = "cc6_clin_immune_phyno_status_fix2.Rdata")
+
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load(file = "cc6_clin_immune_phyno_status_fix2.Rdata")
+clin_immune_phyno_status_fix2<-cc6[,-1]
+rownames(clin_immune_phyno_status_fix2)<-cc6[,1]
+colnames(clin_immune_phyno_status_fix2)
+#[1] "life_time"                           "status"                              "math"                               
+#[4] "strmal_score"                        "immune_score"                        "estimate_score"                     
+#[7] "ER_Status_nature2012"                "PR_Status_nature2012"                "HER2_Final_Status_nature2012"       
+#[10] "PAM50Call_RNAseq"                    "pathologic_M"                        "pathologic_N"                       
+#[13] "pathologic_T"                        "pathologic_stage"                    "immune"                             
+#[16] "strma"                               "age_at_initial_pathologic_diagnosis" "DSS"                                
+#[19] "DSS.time"                            "DFI"                                 "DFI.time"                           
+#[22] "PFI"                                 "PFI.time"                            "Non_silent_per_Mb"                  
+#[25] "TMB"                               
+library(survival)
+unicox_immune_score<-coxph(Surv(life_time,status)~immune_score,data = clin_immune_phyno_status_fix2)
+unicox_strmal_score<-coxph(Surv(life_time,status)~strmal_score,data = clin_immune_phyno_status_fix2)
+unicox_estimate_score<-coxph(Surv(life_time,status)~estimate_score,data = clin_immune_phyno_status_fix2)
+unicox_TMB_SOCRE<-coxph(Surv(life_time,status)~Non_silent_per_Mb,data = clin_immune_phyno_status_fix2)
+##发现除了strmal_score和TMB之外，其它与生存（os）都有关系
+##单因素分析找与PFI的关系
+unicox_immune_score_PFI<-coxph(Surv(PFI.time,PFI)~immune_score,data = clin_immune_phyno_status_fix2)
+unicox_strmal_score_PFI<-coxph(Surv(PFI.time,PFI)~strmal_score,data = clin_immune_phyno_status_fix2)
+unicox_TMB_SOCRE_PFI<-coxph(Surv(PFI.time,PFI)~Non_silent_per_Mb,data = clin_immune_phyno_status_fix2)
+
+###注意上面数据中 划分高低是根据中位值划分的，下面将根据cutoff值划分。后面会删除前面的划分数据，重新添加划分数据
+
+##寻找最佳cutoff值
+library(survminer)
+res.cut <- surv_cutpoint(clin_immune_phyno_status_fix2, time = "life_time", event = "status",
+                         variables=c("estimate_score","immune_score","strmal_score","Non_silent_per_Mb"))
+##  variables = c("DEPDC1", "WHSC1", "CRIM1"))这样就是同时计算多变量的cutoff值
+summary(res.cut)
+##直接将变量用cutoff值进行分类 
+res.cat <- surv_categorize(res.cut)
+table(res.cat$estimate_score)
+
+#检测肿瘤突变负荷按照cutoff值分组，和免疫和基质的关系
+#将cutoff分组添加到数据中，第一步将原来数据中的TMB分组按照中位值删除掉
+colnames(res.cat)[3]<-"estimate"
+colnames(res.cat)[4]<-"immune"
+colnames(res.cat)[5]<-"stromal"
+colnames(res.cat)[6]<-"TMB"
+#先将原本的数据中高低值删除，再添加（因为不知道原本是怎么分值为高低值的）
+
+clin_immune_phyno_status_fix3<-clin_immune_phyno_status_fix2[,-c(15,16,25)]
+clin_immune_phyno_status_fix4<-cbind(clin_immune_phyno_status_fix3,res.cat[,c(3,4,5,6)])
+colnames(clin_immune_phyno_status_fix4)[25]<-"stromal"
+save(clin_immune_phyno_status_fix4,file = "clin_immune_phyno_status_fix4.Rdata")
+
+load(file = "clin_immune_phyno_status_fix4.Rdata")
+
+##k-m生存分析
+library("survival")
+library(ggplot2)
+##第一步k-m生存分析(os)
+diff1<-survdiff(Surv(life_time,status) ~estimate, data = clin_immune_phyno_status_fix4)
+p_value1<-signif((1 - pchisq(diff1$chisq,df=1)),3)
+diff2<-survdiff(Surv(life_time,status) ~immune, data = clin_immune_phyno_status_fix4)
+p_value2<-signif((1 - pchisq(diff2$chisq,df=1)),3)
+diff3<-survdiff(Surv(life_time,status) ~stromal, data = clin_immune_phyno_status_fix4)
+p_value3<-signif((1 - pchisq(diff3$chisq,df=1)),3)
+diff4<-survdiff(Surv(life_time,status) ~TMB, data = clin_immune_phyno_status_fix4)
+p_value4<-signif((1 - pchisq(diff4$chisq,df=1)),3)
+
+##第二部作图
+fit <- survfit(Surv(life_time,status) ~immune, data = clin_immune_phyno_status_fix4)
+ggsurvplot(fit, data = clin_immune_phyno_status_fix4, risk.table = TRUE, conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+fit2<-survfit(Surv(life_time,status) ~stromal, data = clin_immune_phyno_status_fix4)
+ggsurvplot(fit2, data = clin_immune_phyno_status_fix4, risk.table = TRUE, conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+fit3<-survfit(Surv(life_time,status) ~TMB, data = clin_immune_phyno_status_fix4)
+ggsurvplot(fit3, data = clin_immune_phyno_status_fix4, risk.table = TRUE, conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+
+##第一步k-m生存分析(PFI)
+#先将PFI.time改为年
+clin_immune_phyno_status_fix4$PFI.time<-clin_immune_phyno_status_fix4$PFI.time/365
+diff_PFI2<-survdiff(Surv(PFI.time,PFI) ~immune, data = clin_immune_phyno_status_fix4)
+p_value_PFI2<-signif((1 - pchisq(diff_PFI2$chisq,df=1)),3)
+diff_PFI3<-survdiff(Surv(PFI.time,PFI) ~stromal, data = clin_immune_phyno_status_fix4)
+p_value_PFI3<-signif((1 - pchisq(diff_PFI3$chisq,df=1)),3)
+diff_PFI4<-survdiff(Surv(PFI.time,PFI) ~TMB, data = clin_immune_phyno_status_fix4)
+p_value_PFI4<-signif((1 - pchisq(diff_PFI4$chisq,df=1)),3)
+
+##第二部作图
+fit <- survfit(Surv(PFI.time,PFI) ~immune, data = clin_immune_phyno_status_fix4)
+ggsurvplot(fit, data = clin_immune_phyno_status_fix4, risk.table = TRUE, conf.int = TRUE,pval = T,
+           tables.height = 0.2,tables.theme = theme_cleantable())
+fit2<-survfit(Surv(PFI.time,PFI) ~stromal, data = clin_immune_phyno_status_fix4)
+ggsurvplot(fit2, data = clin_immune_phyno_status_fix4, risk.table = TRUE, conf.int = TRUE,pval = T,
+           tables.height = 0.2,tables.theme = theme_cleantable())
+fit3<-survfit(Surv(PFI.time,PFI) ~TMB, data = clin_immune_phyno_status_fix4)
+ggsurvplot(fit3, data = clin_immune_phyno_status_fix4, risk.table = TRUE, conf.int = TRUE,pval = T,
+           tables.height = 0.2,tables.theme = theme_cleantable())
+
+
+####发现最佳cutoff值存在一个问题，cutoff值使用os计算的，可是后面还要计算PFI。下面用中位值来计算一下试试看
+#先将原来的分组删掉
+clin_immune_phyno_status_fix5<- clin_immune_phyno_status_fix4[,-c(23,24,25,26)]
+clin_immune_phyno_status_fix5$immune<-ifelse(clin_immune_phyno_status_fix4$immune_score>median(clin_immune_phyno_status_fix4$immune_score),"high","low")
+clin_immune_phyno_status_fix5$strma<-ifelse(clin_immune_phyno_status_fix4$strmal_score>median(clin_immune_phyno_status_fix4$strmal_score),"high","low")
+clin_immune_phyno_status_fix5$TMB<-ifelse(clin_immune_phyno_status_fix4$Non_silent_per_Mb>median(clin_immune_phyno_status_fix4$Non_silent_per_Mb),"high","low")
+################################################
+#####################################################
+#根据中位值做PFI看看效果如何  ###发现3个P值均没有意义。故还是抛弃吧
+## diff_PFI2<-survdiff(Surv(PFI.time,PFI) ~immune, data = clin_immune_phyno_status_fix5)
+## p_value_PFI2<-signif((1 - pchisq(diff_PFI2$chisq,df=1)),3)
+## diff_PFI3<-survdiff(Surv(PFI.time,PFI) ~strma, data = clin_immune_phyno_status_fix5)
+## p_value_PFI3<-signif((1 - pchisq(diff_PFI3$chisq,df=1)),3)
+## diff_PFI4<-survdiff(Surv(PFI.time,PFI) ~TMB, data = clin_immune_phyno_status_fix5)
+## p_value_PFI4<-signif((1 - pchisq(diff_PFI4$chisq,df=1)),3)
+
+  ##第二部作图
+##fit <- survfit(Surv(PFI.time,PFI) ~immune, data = clin_immune_phyno_status_fix5)
+##ggsurvplot(fit, data = clin_immune_phyno_status_fix5, risk.table = TRUE, conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+##fit2<-survfit(Surv(PFI.time,PFI) ~strma, data = clin_immune_phyno_status_fix5)
+##ggsurvplot(fit2, data = clin_immune_phyno_status_fix5, risk.table = TRUE, conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+##fit3<-survfit(Surv(PFI.time,PFI) ~TMB, data = clin_immune_phyno_status_fix5)
+##ggsurvplot(fit3, data = clin_immune_phyno_status_fix5, risk.table = TRUE, conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+
+
+
+
+
+###查看根据TMB分组，免疫和基质评分是否有意义。还可以做相关性图
+library(MASS)
+boxplot(clin_immune_phyno_status_fix4$strmal_score~clin_immune_phyno_status_fix4$TMB,data=clin_immune_phyno_status_fix4,
+        col=rainbow(6),main="p<0.001") ##y写在前面，X写在后面,names=c(“”，“”，“”) p-value = 0.0007358
+
+wilcox.test(clin_immune_phyno_status_fix4$strmal_score~clin_immune_phyno_status_fix4$TMB,data=clin_immune_phyno_status_fix4)
+
+boxplot(clin_immune_phyno_status_fix4$immune_score~clin_immune_phyno_status_fix4$TMB,
+        data=clin_immune_phyno_status_fix4,col=rainbow(6),main="p=0.725") ##y写在前面，X写在后面,names=c(“”，“”，“”)
+wilcox.test(clin_immune_phyno_status_fix4$immune_score~clin_immune_phyno_status_fix4$TMB,data=clin_immune_phyno_status_fix4)
+
+
+boxplot(clin_immune_phyno_status_fix4$estimate_score~clin_immune_phyno_status_fix4$TMB,data=clin_immune_phyno_status_fix4) ##y写在前面，X写在后面,names=c(“”，“”，“”)
+wilcox.test(clin_immune_phyno_status_fix4$estimate_score~clin_immune_phyno_status_fix4$TMB,data=clin_immune_phyno_status_fix4)
+
+###查看根据immune分组，TMB和基质评分是否有意义。还可以做相关性图
+library(MASS)
+boxplot(clin_immune_phyno_status_fix4$strmal_score~clin_immune_phyno_status_fix4$immune,data=clin_immune_phyno_status_fix4,
+        col=rainbow(6),main="p<0.001") ##y写在前面，X写在后面,names=c(“”，“”，“”) p-value = 0.0007358
+
+wilcox.test(clin_immune_phyno_status_fix4$strmal_score~clin_immune_phyno_status_fix4$immune,data=clin_immune_phyno_status_fix4)
+#发现图片挤压到一块，故取log2
+boxplot(log2(clin_immune_phyno_status_fix4$Non_silent_per_Mb)~clin_immune_phyno_status_fix4$immune,
+        data=clin_immune_phyno_status_fix4,col=rainbow(6),main="p=0.00403") ##y写在前面，X写在后面,names=c(“”，“”，“”)
+wilcox.test(log2(clin_immune_phyno_status_fix4$Non_silent_per_Mb)~clin_immune_phyno_status_fix4$immune,data=clin_immune_phyno_status_fix4)
+
+
+##突然想到，用WGCNA分析，造出模块中的基因会不会更好
+##########下面开始WGCNA分析
+##需要准备两组数据 1  表达矩阵 2 表型数据
+#3.1 加载TCGA乳腺癌基因FPKM数据，并将基因表达数据和临床表型数据样本统一
+load("D:/大数据和原始数据资料/乳腺癌TCGA数据库20191226/coxmodel_all_data/count_matrix_pcg_rpkm.Rdata")
+head(count_matrix_pcg_rpkm)[1:10,1:10]
+dim(count_matrix_pcg_rpkm)
+###下面clin_immune_phyno_status_fix4与allclinical1 的样本数一样，clin_immune_phyno_status_fix4是由allclinical1得来的，只是
+##加了免疫评分等三个指标的高低值
+load(file = "allclinical.Rdata")##用数据allclinical1
+rownames(allclinical1)<-allclinical1[,1]
+allclinical1<-allclinical1[,-1]
+allclinical1<-allclinical1[,-c(15,16)]
+
+colnames(count_matrix_pcg_rpkm)<-substr(colnames(count_matrix_pcg_rpkm),1,12)
+
+count_matrix_pcg_rpkm1<-count_matrix_pcg_rpkm[,!duplicated(colnames(count_matrix_pcg_rpkm))]
+exp<-count_matrix_pcg_rpkm1[,colnames(count_matrix_pcg_rpkm1)%in%rownames(clin_immune_phyno_status_fix4)]
+#intersect(rownames(allclinical1),colnames(count_matrix_pcg_rpkm1))
+intersect(rownames(clin_immune_phyno_status_fix4),colnames(count_matrix_pcg_rpkm1))
+
+############++++++++++++++++++++++注意++++++++++++################################
+############++++++++++++++++++++++注意++++++++++++################################
+############++++++++++++++++++++++注意++++++++++++################################
+############++++++++++++++++++++++注意++++++++++++################################
+##此时发现上面多因素和单因素的样本量又要缩小，会不会改变原始结果呢？设置新的值，重新运行一篇？？后面发现还好结果没变
+
+#newdata<-allclinical1[colnames(exp),]
+newdata<-clin_immune_phyno_status_fix4[colnames(exp),]
+#rownames(allclinical1)<-substr(rownames(allclinical1),1,15)
+###newdata1<-newdata[,-c(17,18,19)]##注意删除的几项，有时候数据不一样
+newdata1<-newdata
+dim(exp)
+dim(newdata1)
+##保存WGCNA需要的数据
+save(newdata1,exp,file = "wgcna_data.Rdata")
+
+
+############++++++++++++++++++++++停止++++++++++++################################
+############++++++++++++++++++++++停止++++++++++++################################
+############++++++++++++++++++++++停止++++++++++++################################
+
+############下面开始WGCNA#################
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load(file = "wgcna_data.Rdata")
+library(WGCNA)
+### 读取表达量数据
+femData = exp
+
+### 查看数据？
+dim(femData)
+names(femData)
+length(names(femData))
+### 总共898个样本
+
+#=====================================================================================
+#  Code chunk 2
+#=====================================================================================
+### 提取正确的表达量数据
+### 样本在行，基因在列.
+test<-femData[1:10,1:10]
+
+##处理一些没有意义的数据
+### 2.低counts数据过滤
+low_count_mask <- rowSums(femData) < ncol(femData)
+raw_counts <- femData[!low_count_mask,]
+sum(low_count_mask)
+?rowsum()
+### 3。log2转换
+log_counts <- log2(raw_counts + 1)
+datExpr0<-as.data.frame(t(log_counts))
+
+save(datExpr0,file = "datExpr0.Rdata")
+load(file = "datExpr0.Rdata")
+### 截取部分数据查看
+test <- datExpr0[1:10,1:10]
+
+### 记住这个数据的格式。
+#=====================================================================================
+#  Code chunk 3
+#=====================================================================================
+### 检查样本和基因是否达标
+### 第一是样本，在行
+### 第二是基因，在列
+### 达标的标准是什么啊？goodSamplesGenes这个函数并不简单
+gsg = goodSamplesGenes(datExpr0, verbose = 3)
+gsg$allOK
+
+#=====================================================================================
+#  Code chunk 4
+#=====================================================================================
+### 如果没有达标就需要筛选
+if (!gsg$allOK){
+  # Optionally, print the gene and sample names that were removed:
+  if (sum(!gsg$goodGenes)>0) 
+    printFlush(paste("Removing genes:", paste(names(datExpr0)[!gsg$goodGenes], collapse = ", ")));
+  if (sum(!gsg$goodSamples)>0) 
+    printFlush(paste("Removing samples:", paste(rownames(datExpr0)[!gsg$goodSamples], collapse = ", ")));
+  # Remove the offending genes and samples from the data:
+  datExpr0 = datExpr0[gsg$goodSamples, gsg$goodGenes]
+}
+
+#=====================================================================================
+#  Code chunk 5
+#=====================================================================================
+### 聚类看异常样本
+
+test <- dist(datExpr0)
+sampleTree = hclust(dist(datExpr0), method = "average")
+### 画图
+par(cex = 0.6)
+par(mar = c(0,4,2,0))
+plot(sampleTree)
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
+
+#=====================================================================================
+#  Code chunk 6
+#=====================================================================================
+### 去除异常样本
+# Plot a line to show the cut
+abline(h = 15, col = "red")
+# Determine cluster under the line
+### 使用WGCNA中的cutreeStatic函数来切割
+clust = cutreeStatic(sampleTree, cutHeight = 200, minSize = 10)
+table(clust)
+# clust 1 contains the samples we want to keep.
+keepSamples = (clust==1)
+### 选取样本
+datExpr = datExpr0[keepSamples, ]
+test <- datExpr[1:10,1:10]
+save(datExpr,newdata1,file = "wgcna2.Rdata")
+load(file = "wgcna2.Rdata")
+### 获取列数，就是基因数目
+nGenes = ncol(datExpr)
+### 获取行数就是样本数
+nSamples = nrow(datExpr)
+
+#=====================================================================================
+#  Code chunk 7
+#=====================================================================================
+### 读取表型信息
+#traitData = data.table::fread("ClinicalTraits.csv",data.table = F)
+#dim(traitData)
+#names(traitData)
+
+### 选取自己需要的免疫/基质/TMB数据
+allTraits = newdata1[, c(4:5,22)]
+#allTraits<-allTraits[,c(1,2,3,8)]
+#allTraits1<-newdata2[,c(15,17,18,19)]
+#allTraits1$estimate<-ifelse(allTraits1$estimate=="high",1,0)
+#allTraits1$immune<-ifelse(allTraits1$immune=="high",1,0)
+#allTraits1$strma<-ifelse(allTraits1$strma=="high",1,0)
+dim(allTraits)
+names(allTraits)
+
+### 获取行名，就是样本名称
+femaleSamples = rownames(datExpr)
+### 获取第一个数据在第二个数据中的位置，返回的是位置
+traitRows = match(femaleSamples, rownames(allTraits))
+
+### 提取交集
+datTraits = allTraits[traitRows,]
+colnames(datTraits)[3]<-"TMB"
+#datTraits1<-allTraits1[traitRows,]
+
+
+### 释放内存
+collectGarbage()
+
+#====================================================================================
+#  Code chunk 8
+
+### 重新聚类
+sampleTree2 = hclust(dist(datExpr), method = "average")
+plot(sampleTree2)
+
+# Convert traits to a color representation: white means low, red means high, grey means missing entry
+## 颜色,白色是low，红色是高，灰色是缺失值
+traitColors = numbers2colors(datTraits, signed = FALSE)
+# Plot the sample dendrogram and the colors underneath.
+## 画图
+## traitColors该部分可以是单独一列，也可以用cbind传入多列，此处传入的是矩阵,26列
+## Each column will be plotted as a horizontal row of colors under the dendrogram.
+plot(sampleTree2)
+plotDendroAndColors(sampleTree2, 
+                    traitColors,
+                    groupLabels = names(datTraits), 
+                    main = "Sample dendrogram and trait heatmap")
+
+### 这里的技能可以迁移
+
+#=====================================================================================
+#  Code chunk 9
+#=====================================================================================
+## 保存数据，表达量数据，性状数据。
+save(datExpr, datTraits, file = "wgcna-01-dataInput.RData")
+
+rm(list = ls())
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+library(WGCNA)
+### 设置多线程
+enableWGCNAThreads()
+### 加载上一步的数据
+load(file = "wgcna-01-dataInput.RData")
+
+#========================寻找模块============================================================
+#========================寻找模块=============================================================
+#========================寻找模块=============================================================
+#========================寻找模块==============================================================
+#  Code chunk 2
+#=====================================================================================
+### 软阈值的确定，
+### 使用函数pickSoftThreshold
+### 人为给定一些值
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+length(powers)
+### 这个power的长度，决定了最终返回结果的行数目
+
+# Call the network topology analysis function
+### 模块这里都是作用于表达量数据，没有性状数据的事情
+sft = pickSoftThreshold(datExpr, powerVector = powers, verbose = 5)
+
+test <- sft$fitIndices
+### 这时候结果已经出来，但是可以通过画图再来看
+
+### 画图呈现结果
+pdf("sofT.pdf")
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2))
+cex1 = 0.9
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red")
+
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.90,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+dev.off()
+### 根据图，选择8
+### 没有图也不要紧
+#=====================================================================================
+#  Code chunk 3
+#=====================================================================================
+### 一步法网络构建以及模块发现
+### power = 6，来自于上一步
+##  maxBlockSize = 5000, 根据自己的电脑可以调整，16GB内存20000，32GB内存30000
+### TOMType 
+### 这一步是所有分析的基石 软件中
+###软件中mergeCutHeight = 0.25做出了是95个模块。我们设置为0.35试一下
+#net = blockwiseModules(datExpr, power = 5,
+                       TOMType = "unsigned", minModuleSize = 30,
+                       reassignThreshold = 0, mergeCutHeight = 0.45,
+                       numericLabels = TRUE, pamRespectsDendro = FALSE,
+                       maxBlockSize=30000,
+                       saveTOMs = TRUE,
+                       saveTOMFileBase = "femaleMouseTOM", 
+                       verbose = 3)
+test<-t(datExpr)
+
+net6 = blockwiseModules(datExpr, power = 6,
+                       TOMType = "unsigned", minModuleSize = 30,
+                       reassignThreshold = 0, mergeCutHeight = 0.45,
+                       numericLabels = TRUE, pamRespectsDendro = FALSE,
+                       maxBlockSize=30000,
+                       saveTOMs = TRUE,
+                       saveTOMFileBase = "femaleMouseTOM", 
+                       verbose = 3)
+
+net6_0.35 = blockwiseModules(datExpr, power = 6,
+                        TOMType = "unsigned", minModuleSize = 30,
+                        reassignThreshold = 0, mergeCutHeight = 0.35,
+                        numericLabels = TRUE, pamRespectsDendro = FALSE,
+                        maxBlockSize=30000,
+                        saveTOMs = TRUE,
+                        saveTOMFileBase = "femaleMouseTOM", 
+                        verbose = 3)
+
+net8 = blockwiseModules(datExpr, power = 8,
+                        TOMType = "unsigned", minModuleSize = 30,
+                        reassignThreshold = 0, mergeCutHeight = 0.45,
+                        numericLabels = TRUE, pamRespectsDendro = FALSE,
+                        maxBlockSize=30000,
+                        saveTOMs = TRUE,
+                        saveTOMFileBase = "femaleMouseTOM80.45", 
+                        verbose = 3)
+
+net8_0.35 = blockwiseModules(datExpr, power = 8,
+                        TOMType = "unsigned", minModuleSize = 30,
+                        reassignThreshold = 0, mergeCutHeight = 0.35,
+                        numericLabels = TRUE, pamRespectsDendro = FALSE,
+                        maxBlockSize=30000,
+                        saveTOMs = TRUE,
+                        saveTOMFileBase = "femaleMouseTOM80.35", 
+                        verbose = 3)
+# 后面Display the correlation values within a heatmap plot  发现模块太多（95个）不好展示。
+##于是更改mergeCutHeight = 0.35  0.45等
+
+### 返回的net是个列表，Module Epigene 表达数据也在里面
+table(net8_0.35$colors)
+save(net6,net6_0.35,net8,net8_0.35,file = "net.Rdata")
+
+load(file = "net.Rdata")
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load(file="net.Rdata")
+### 总共找到18个模块
+### 0表示的是不在模块内的基因
+#=====================================================================================
+#  Code chunk 4
+#=====================================================================================
+### 画图
+# open a graphics window
+sizeGrWindow(12, 9)
+### 标签转为颜色
+mergedColors = labels2colors(net8$colors)##将每一个基因变成模块的颜色 便于后面根据模块提取基因
+table(mergedColors)
+# Plot the dendrogram and the module colors underneath
+plot(net1$dendrograms[[1]])
+plotDendroAndColors(net8$dendrograms[[1]], 
+                    mergedColors[net8$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+
+#=====================================================================================
+#  Code chunk 5
+#=====================================================================================
+### 保存数据
+moduleLabels = net8$colors
+moduleColors = labels2colors(net8$colors)##将每一个基因变成模块的颜色 便于后面根据模块提取基因
+MEs = net8$MEs
+geneTree = net8$dendrograms[[1]]
+save(MEs, moduleLabels, moduleColors, geneTree, file = "wgcna38module-02-networkConstruction-auto.RData")
+#############++++++++++++++++++++++++++++++++++#######################################
+#############++++++++++++++++++++++++++++++++++#######################################
+#############++++++++++++++++++++++++++++++++++#######################################
+#############++++++++++++++++++++++++++++++++++#######################################
+### 把模块和性状取得联系
+### 最关心的一步是这个,也是最多变化的一步。
+### 但是很简单
+### 3.Relating modules to external clinical traits and identifying important genes
+#=====================================================================================
+#  Code chunk 1
+#=====================================================================================
+rm(list = ls())
+# Load the WGCNA package
+library(WGCNA)
+### 加载原始数据
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load(file = "wgcna-01-dataInput.RData")
+test <- datExpr[1:10,1:10]
+### 加载以及确定模块的数据
+load(file = "wgcna38module-02-networkConstruction-auto.RData")
+
+#=====================================================================================
+#  Code chunk 2
+#=====================================================================================
+
+# Define numbers of genes and samples
+### 获取基因数据
+nGenes = ncol(datExpr)
+### 获取样本数目
+nSamples = nrow(datExpr)
+# Recalculate MEs with color labels
+### 计算模块的Eigengenes   其实在上面找模块中已经有这个结果了（net），为什么再做一次？
+test <- moduleEigengenes(datExpr, moduleColors)
+### 提取结果
+MEs0 = moduleEigengenes(datExpr, moduleColors)$eigengenes
+### 重新排序，改变的是列的位置 ，没有实际意义，主要用于绘图
+MEs = orderMEs(MEs0)
+#############################################################################
+### 很重要的步骤，很简单的操作
+### 求模块和表型的相关性，datTraits 的要求是什么？？
+moduleTraitCor = cor(MEs, datTraits, use = "p")
+### 算模块和表型相关性的p值
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
+
+#=====================================================================================
+#  Code chunk 3
+#=====================================================================================
+
+sizeGrWindow(10,6)
+# Will display correlations and their p-values
+### 神奇操作！！
+textMatrix =  paste(signif(moduleTraitCor, 2), "\n(",
+                    signif(moduleTraitPvalue, 1), ")", sep = "");
+dim(textMatrix) = dim(moduleTraitCor)
+
+par(mar = c(6, 8.5, 3, 3));
+# Display the correlation values within a heatmap plot  发现模块太多（95个）不好展示。
+##于是更改mergeCutHeight = 0.35  0.45等
+labeledHeatmap(Matrix = moduleTraitCor,
+               xLabels = names(datTraits),
+               yLabels = names(MEs),
+               ySymbols = names(MEs),
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.3,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+
+#=====================================================================================
+#  Code chunk 4
+#=====================================================================================
+
+# Define variable weight containing the weight column of datTrait
+immune_score = as.data.frame(datTraits$immune_score)
+strmal_score<-as.data.frame(datTraits$strmal_score)
+names(immune_score) = "immune_score"
+names(strmal_score)<-"strmal_score"
+# names (colors) of the modules,cong
+## 从第三位开始选取
+modNames = substring(names(MEs), 3)
+##################################################################
+##################################################################
+##################################################################
+### 计算所有基因和模块以及所有基因和表型的相关性，可以不做。
+### module membership MM
+### Gene Significance GS
+
+ModuleMembership = as.data.frame(cor(datExpr, MEs, use = "p"))##模块和所有基因间的相关性
+MMPvalue = as.data.frame(corPvalueStudent(as.matrix(ModuleMembership), nSamples))##相关性的p值
+
+names(ModuleMembership) = paste("MM", modNames, sep="")
+names(MMPvalue) = paste("p.MM", modNames, sep="")
+
+
+TraitSignificance_immune = as.data.frame(cor(datExpr, immune_score, use = "p"))###免疫评分表型和所有基因的相关性
+TraitSignificance_strmal<-as.data.frame(cor(datExpr, strmal_score, use = "p"))###基质评分表型和所有基因的相关性
+GSPvalue_immune = as.data.frame(corPvalueStudent(as.matrix(TraitSignificance_immune), nSamples))#相关性的P值
+GSPvalue_strmal = as.data.frame(corPvalueStudent(as.matrix(TraitSignificance_strmal), nSamples))
+names(TraitSignificance_immune) = paste("GS.", names(immune_score), sep="")
+names(TraitSignificance_strmal) = paste("GS.", names(strmal_score), sep="")
+#names(GSPvalue) = paste("p.GS.", names(immune_score), sep="");
+############################################################################################
+############################################################################################
+##################################################################
+#=====================================================================================
+#  Code chunk 5
+#=====================================================================================
+### 从模块和基因见的关系发现 green 和immune_score 相关性很大.black和strmal相关性大
+#第一步：找green模块和immune_score的关系并作图
+module = "green"
+column = match(module, modNames)
+table(moduleColors)
+### 提取模块内的基因，目前尚无表型信息
+moduleGenes = moduleColors==module
+table(moduleGenes)
+sizeGrWindow(7, 7)
+par(mfrow = c(1,1))
+### 本质上就是一个散点图
+MM_immune <- abs(ModuleMembership[moduleGenes, column])##提取模块中的基因和模块的相关性，并取绝对值。这个是固定的
+GS_immune<- abs(TraitSignificance_immune[moduleGenes, 1])###提取模块中的基因和表型的相关性，
+
+verboseScatterplot(MM_immune,GS_immune,
+                   xlab = paste("Module Membership in", module, "module"),
+                   ylab = "Gene significance for immune score",
+                   main = paste("Module membership vs. gene significance\n"),
+                   cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+
+module = "green"
+column = match(module, modNames)
+table(moduleColors)
+### 提取模块内的基因
+moduleGenes = moduleColors==module
+##画出基因和estimate_score 以及模块的相关性散点图
+sizeGrWindow(7, 7)
+par(mfrow = c(1,1))
+#MM_estimate <- abs(geneModuleMembership[moduleGenes, column])
+#GS_estimate <- abs(geneTraitSignificance_estimate[moduleGenes, 1])
+
+#verboseScatterplot(MM_estimate,GS_estimate,
+                   xlab = paste("Module Membership in", module, "module"),
+                   ylab = "Gene significance for estimate score",
+                   main = paste("Module membership vs. gene significance\n"),
+                   cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+
+### 自己筛选？？
+
+###############提取模块内的基因#############
+###############提取模块内的基因#############
+###############提取模块内的基因#############
+
+greengenename<-names(datExpr)[moduleColors=="green"]###提取模块中的基因
+table(moduleColors=="green")
+colnames(datExpr)
+#第二步：找和strmal 相关的模块和基因
+module1 = "black" 
+column1 = match(module1, modNames)
+table(moduleColors)
+### 提取模块内的基因，目前尚无表型信息
+moduleGenes1 = moduleColors==module1
+table(moduleGenes1)
+sizeGrWindow(7, 7)
+par(mfrow = c(1,1))
+### 本质上就是一个散点图
+MM_strmal <- abs(ModuleMembership[moduleGenes1, column1])##提取模块中的基因和模块的相关性，并取绝对值。这个是固定的
+GS_strmal<- abs(TraitSignificance_strmal[moduleGenes1, 1])###提取模块中的基因和表型的相关性，
+
+verboseScatterplot(MM_strmal,GS_strmal,
+                   xlab = paste("Module Membership in", module1, "module"),
+                   ylab = "Gene significance for strmal score",
+                   main = paste("Module membership vs. gene significance\n"),
+                   cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+
+
+### 提取模块内的基因
+moduleGenes = moduleColors==module1
+##画出基因和estimate_score 以及模块的相关性散点图
+sizeGrWindow(7, 7)
+par(mfrow = c(1,1))
+#MM_estimate <- abs(geneModuleMembership[moduleGenes, column])
+#GS_estimate <- abs(geneTraitSignificance_estimate[moduleGenes, 1])
+
+#verboseScatterplot(MM_estimate,GS_estimate,
+xlab = paste("Module Membership in", module, "module"),
+ylab = "Gene significance for estimate score",
+main = paste("Module membership vs. gene significance\n"),
+cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+
+### 自己筛选？？
+
+###############提取模块内的基因#############
+###############提取模块内的基因#############
+###############提取模块内的基因#############
+
+blackgenename<-names(datExpr)[moduleColors=="black"]###提取模块中的基因
+
+
+
+##如何找到Hub基因????
+#hubs= chooseTopHubInEachModule(datExpr, moduleColors)##每个模块中的一个HUB基因
+#第一步，挑选green中的基因
+#挑选green模块中的基因
+MM <- ModuleMembership[moduleGenes, column]##模块中的基因和模块的相关性
+MMP <- MMPvalue[moduleGenes, column]##模块中的基因和模块的相关性的P值
+##注意更换表型
+GS_immune <-  TraitSignificance_immune[moduleGenes, 1]###模块中的基因和对应表型的相关性
+GSPvalue_immune <- GSPvalue_immune[moduleGenes, 1]###模块中的基因和对应表型的相关性的P值
+
+mydata_immune <- data.frame(moduleGenes=colnames(datExpr)[moduleGenes],MM,MMP,GS_immune,GSPvalue_immune)
+
+#第二部，挑选black中的基因
+
+MM1 <- ModuleMembership[moduleGenes1, column1]##模块中的基因和模块的相关性
+MMP1 <- MMPvalue[moduleGenes1, column1]##模块中的基因和模块的相关性的P值
+GS_strmal <-  TraitSignificance_strmal[moduleGenes1, 1]###模块中的基因和对应表型的相关性
+GSPvalue_strmal <- GSPvalue_strmal[moduleGenes1, 1]###模块中的基因和对应表型的相关性的P值
+mydata_strmal<- data.frame(moduleGenes1=colnames(datExpr)[moduleGenes1],MM1,MMP1,GS_strmal,GSPvalue_strmal)
+
+save(mydata_strmal,mydata_immune,file = "基因与模块和免疫的关系net8.Rdata")
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load( "基因与模块和免疫的关系net8.Rdata")
+library(dplyr)
+mydata_immune_select <- mydata_immune %>% 
+  filter(MMP < 0.05,GSPvalue_immune < 0.05,MM > 0.8,GS_immune>0.6) %>% 
+  arrange(desc(MM),desc(GS_immune))
+mydata_strmal_select<-mydata_strmal%>%
+  filter(MMP1 < 0.05,GSPvalue_strmal < 0.05,MM1 > 0.8,GS_strmal>0.6)%>%
+  arrange(desc(MM1),desc(GS_strmal))
+
+#intersect(mydata1_immune_select$moduleGenes,mydata1_estimate_select$moduleGenes)
+#table(mydata1_immune_select$moduleGenes%in%mydata1_estimate_select$moduleGenes)
+##提出基因名
+allgene_immune<-as.character(mydata_immune_select$moduleGenes)
+allgene_strmal<-as.character(mydata_strmal_select$moduleGenes1)
+
+##第一步 通过单因素分析，查看基因与生存的关系
+#找green模块中基因和生存的关系
+##构建数据
+load(file = "wgcna_data.Rdata") 
+load(file = "datExpr0.Rdata.")
+unicoxdata_immune<-datExpr0[,allgene_immune]
+unicoxdata_immune2<-cbind(newdata1[,c(1,2)],unicoxdata_immune)
+library(survival)
+univar_out<-data.frame(matrix(NA,(ncol(unicoxdata_immune2)-2),5))
+rownames(univar_out)<-colnames(unicoxdata_immune2)[-c(1:2)]
+colnames(univar_out)<-c("Coeffcient","HR","lower.95","upper.95","P-Value")
+for (i in colnames(unicoxdata_immune2)[-c(1:2)]) {
+  cox<-coxph(Surv(life_time,status)~unicoxdata_immune2[,i],data = unicoxdata_immune2)
+  cox_summary<-summary(cox)
+  univar_out[i,1]<-cox_summary$coefficients[,1]
+  univar_out[i,2]<-cox_summary$coefficients[,2]
+  univar_out[i,3]<-cox_summary$conf.int[,3]
+  univar_out[i,4]<-cox_summary$conf.int[,4]
+  univar_out[i,5]<-cox_summary$coefficients[,5]
+}
+########发现这些基因都是起保护作用#######################
+uni001_immune<-univar_out[univar_out$`P-Value`<0.01,]
+uni005_immune<-univar_out[univar_out$`P-Value`<0.05,]
+
+#找black模块中基因和生存的关系
+##构建数据
+unicoxdata_strmal<-datExpr0[,allgene_strmal]
+unicoxdata_strmal2<-cbind(newdata1[,c(1,2)],unicoxdata_strmal)
+library(survival)
+univar_out<-data.frame(matrix(NA,(ncol(unicoxdata_strmal2)-2),5))
+rownames(univar_out)<-colnames(unicoxdata_strmal2)[-c(1:2)]
+colnames(univar_out)<-c("Coeffcient","HR","lower.95","upper.95","P-Value")
+for (i in colnames(unicoxdata_strmal2)[-c(1:2)]) {
+  cox<-coxph(Surv(life_time,status)~unicoxdata_strmal2[,i],data = unicoxdata_strmal2)
+  cox_summary<-summary(cox)
+  univar_out[i,1]<-cox_summary$coefficients[,1]
+  univar_out[i,2]<-cox_summary$coefficients[,2]
+  univar_out[i,3]<-cox_summary$conf.int[,3]
+  univar_out[i,4]<-cox_summary$conf.int[,4]
+  univar_out[i,5]<-cox_summary$coefficients[,5]
+}
+########发现这些基因都是起保护作用#######################
+uni001_strmal<-univar_out[univar_out$`P-Value`<0.01,]
+uni005_strmal<-univar_out[univar_out$`P-Value`<0.05,]
+
+
+
+
+
+##############Lasso寻找关键基因。##################
+##############Lasso寻找关键基因。##################
+##############Lasso寻找关键基因。##################
+
+##通过Lasso-cox 回归找出与生存相关的基因,前提是变量比样本数多.在我们这行不通？？？
+library(glmnet)
+library(rms)
+library(VIM)##包中aggr()函数，判断缺失值
+library(survival)
+x<-unicoxdata_immune2[,-c(1,2)]
+x<-as.matrix(x)
+y<-data.matrix(Surv(unicoxdata_immune2$life_time,unicoxdata_immune2$status))
+cv.fit<-cv.glmnet(x,y,family="cox")#,maxit = 1000,默认是10万次,nfold=10,就是用10折交叉验证
+#?cv.glmnet
+plot(cv.fit)
+fit<-glmnet(x,y,family = "cox")
+#?glmnet
+plot(fit)
+
+coefficients<-coef(fit,s=cv.fit$lambda.min)
+Active.Index<-which(coefficients!=0)
+Active.coefficients<-coefficients[Active.Index]
+Active.Index
+Active.coefficients
+row.names(coefficients)[Active.Index]
+#siggenename<-row.names(coefficients)[Active.Index]
+
+
+#发现四个基因，而且均与生存相关P<0.01"ENSG00000149781.11" "ENSG00000138964.15" "ENSG00000128340.13" "ENSG00000140368.11"
+#2020-09-04日代码发现两个基因，而且均与生存相关P<0.01"ENSG00000149781.11"、"ENSG00000125910.5" 
+###########随机森林找关键基因#####################################
+###########随机森林找关键基因#####################################
+###########随机森林找关键基因#####################################
+###########随机森林找关键基因#####################################
+
+
+
+
+
+
+#green模块随机森林
+library(survivalsvm)
+library(randomForestSRC)
+out.rsf.1<-rfsrc(Surv(life_time,status)~.,
+                 data = unicoxdata_immune2,ntree = 10000,
+                 nsplit = 1)
+
+plot.survival(out.rsf.1,subset = c(3, 10))
+print.rfsrc(out.rsf.1)
+pred<-predict(out.rsf.1,unicoxdata_immune2,OOB=T,type="response")
+gene.vs<-var.select(object = out.rsf.1,
+                    method = "md")#md 速度慢，准确度高。vh 速度快，准确度相对较低
+randomforests_geneimmune<-gene.vs$topvars
+
+siggene_immune<-intersect(randomforests_geneimmune,rownames(uni001_immune))###找到36个
+
+#black模块随机森林
+library(survivalsvm)
+library(randomForestSRC)
+out.rsf.1<-rfsrc(Surv(life_time,status)~.,
+                 data = unicoxdata_strmal2,ntree = 10000,
+                 nsplit = 1)
+print.rfsrc(out.rsf.1)
+pred<-predict(out.rsf.1,unicoxdata_strmal2,OOB=T,type="response")
+gene.vs<-var.select(object = out.rsf.1,
+                    method = "md")#md 速度慢，准确度高。vh 速度快，准确度相对较低
+randomforests_genestrmal<-gene.vs$topvars
+
+siggene_strmal<-intersect(randomforests_genestrmal,rownames(uni005_strmal))###找到1个
+
+#韦恩图
+library(VennDiagram)
+A = randomforests_geneimmune
+B = rownames(uni001_immune)
+#C = c(20:40,141:200)
+Length_A<-length(A)
+Length_B<-length(B)
+#Length_C<-length(C)
+Length_AB<-length(intersect(A,B))
+
+#Length_BC<-length(intersect(B,C))
+#Length_AC<-length(intersect(A,C))
+#Length_ABC<-length(intersect(intersect(A,B),C))
+T<-venn.diagram(list(A=A,B=B),filename=NULL
+             ,lwd=1,lty=2
+             ,col=c('red','green'),fill=c('red','green')
+             ,cat.col=c('red','green')
+             ,rotation.degree=90)
+
+grid.draw(T)
+
+##保存样本信息和基因信息，便于后面分析
+load(file = "wgcna_data.Rdata")#newdata1,exp，
+#dim(clin_immune_phyno_status_fix4)
+#dim(count_matrix_pcg_rpkm1)
+#intersect(rownames(clin_immune_phyno_status_fix4),substr(colnames(count_matrix_pcg_rpkm1),1,12))##发现只有898个样本有基因表达量，故用之前的数据
+
+
+exp1<-exp[c(siggene_immune,siggene_strmal),]
+#建立多因素COX数据，第一步将OS和PPI数据和基因数据放在一个数据框中
+exp2<-as.data.frame(t(exp1))
+cox_os_PPI_data<-cbind(newdata,exp2)
+save(cox_os_PPI_data,file = "cox_os_PPI_data.Rdata")
+
+
+
+
+##明日试一下从green模块中1116个基因进行lasso-cox 回归找出与生存相关的基因,然后进行交集
+##############Lasso寻找关键基因。##################
+##############Lasso寻找关键基因。##################
+##############Lasso寻找关键基因。##################
+####通过Lasso-cox 回归找出与生存相关的基因,#####前提是变量比样本数多.在我们这行不通？？？
+lassodata<-t(exp)[,greengenename]
+lassodata2<-cbind(newdata2[,c(1,2)],lassodata)
+#library(glmnet)
+#library(rms)
+#library(VIM)##包中aggr()函数，判断缺失值
+#library(survival)
+x<-lassodata2[,-c(1,2)]
+x<-as.matrix(x)
+y<-data.matrix(Surv(lassodata2$life_time,lassodata2$status))
+cv.fit<-cv.glmnet(x,y,family="cox")#,maxit = 1000,默认是10万次,nfold=10,就是用10折交叉验证
+?cv.glmnet
+plot(cv.fit)
+fit<-glmnet(x,y,family = "cox")
+?glmnet
+plot(fit)
+
+coefficients<-coef(fit,s=cv.fit$lambda.min)
+Active.Index<-which(coefficients!=0)
+Active.coefficients<-coefficients[Active.Index]
+Active.Index
+Active.coefficients
+row.names(coefficients)[Active.Index]
+lassosiggenename<-row.names(coefficients)[Active.Index]
+
+intersect(greengenename,allgene)
+
+###
+###找到和Lasso交集的三个"ENSG00000149781.11"==FERMT3  "ENSG00000128340.13"==RAC2（免疫中下游MEKK） "ENSG00000140368.11"==PSTPIP1
+##9.04日找到和Lasso交集的两个"ENSG00000149781.11"、"ENSG00000125910.5" +
+
+
+
+
+
+        
+##发现结果很差，故下面不需要做，下面代码仅供后面预测能力较好的模型的验证和矫正等。####
+##发现结果很差，故下面不需要做，下面代码仅供后面预测能力较好的模型的验证和矫正等。####
+##发现结果很差，故下面不需要做，下面代码仅供后面预测能力较好的模型的验证和矫正等。####
+##发现结果很差，故下面不需要做，下面代码仅供后面预测能力较好的模型的验证和矫正等。####
+
+
+
+
+###################不做不做不做不做不做不做不做不做#############################
+###################不做不做不做不做不做不做不做不做#############################
+###################不做不做不做不做不做不做不做不做#############################
+###################不做不做不做不做不做不做不做不做#############################
+###################################################################
+#多因素回归建模
+load(file = "cox_os_PPI_data.Rdata")
+#选出生存和基因数据
+
+cox_os_PPI_data[,c(27:ncol(cox_os_PPI_data))]<-log2(cox_os_PPI_data[,c(27:ncol(cox_os_PPI_data))]+0.1)
+coxmultidata<-cox_os_PPI_data[,c(1,2,27:63)]
+coxmulti<-coxph(Surv(life_time,status)~.,data = coxmultidata)
+cox_model<-step(coxmulti,direction = "both")
+
+cox_model
+cox_sum<-summary(cox_model)
+coxgenename<-rownames(cox_sum$coefficients)
+coxtraindata<-cox_os_PPI_data[,c(1,2,20,21,22,)]
+coxtraindata<-cbind(cox_os_PPI_data[,c(1,2,20,21,22,24,25,26,4,5,11:15)],cox_os_PPI_data[,coxgenename])
+colnames(coxtraindata)[5]<-"TMB_score"
+coxtraindata$PFI.time<-coxtraindata$PFI.time/365
+coxtrainscore<-predict(cox_model,type = "risk",newdata = coxtraindata)
+coxrisk<-as.vector(ifelse(coxtrainscore>median(coxtrainscore),"high","low"))
+trainriskdata<-cbind(coxtraindata[,-c(16:19)],coxtrainscore,coxrisk)
+
+###做多因素模型森林图
+library(survminer)
+ggforest(cox_model,data=coxmultidata,main = "Hazard ratio",cpositions = c(0.02,0.22, 0.4), fontsize = 0.7, refLabel = "reference", noDigits = 2)
+
+save(trainriskdata,file = "liexiantu_data.Rdata")
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load(file = "liexiantu_data.Rdata")
+
+##做列线图
+#加载安装包
+library(rms)
+library(foreign)
+library(survival)
+#读取数据
+
+tcga<-trainriskdata
+#将数据转换成因子格式
+colnames(tcga)
+tcga$TMB<-factor(tcga$TMB)
+tcga$immune<-factor(tcga$immune)
+tcga$strmal<-factor(tcga$strmal)
+tcga$pathologic_T<-factor(tcga$pathologic_T,labels=c("T1","T2","T3","T4"))
+tcga$pathologic_M<-factor(tcga$pathologic_M,labels=c("M0","M1"))
+tcga$pathologic_N<-factor(tcga$pathologic_N,labels=c("N0","N1","N2","N3"))
+tcga$pathologic_stage<-factor(tcga$pathologic_stage,labels=c("I","II","III","IV"))
+tcga$coxrisk<-factor(tcga$coxrisk)#labels = c("high","low")
+colnames(tcga)[15]<-"age"
+colnames(tcga)[16]<-"riskscore"
+colnames(tcga)[17]<-"risk"
+str(tcga$pathologic_M)
+class(tcga$pathologic_M)
+table(tcga$pathologic_M)
+table(is.na(tcga))
+#将数据打包好
+ddist <- datadist(tcga)
+options(datadist='ddist')
+#构建多因素的Cox回归模型 OS
+coxno <- cph(Surv(life_time,status) ~ risk+pathologic_M+pathologic_N+pathologic_T+pathologic_stage+TMB+immune+
+               age,surv=T,x=T, y=T,data=tcga)
+summary(coxno)
+
+surv <- Survival(coxno)
+coxc_statistic<-coxph(Surv(life_time,status) ~ risk+pathologic_M+pathologic_N+pathologic_T+pathologic_stage+TMB+immune+
+                        age,data=tcga)
+summary(coxc_statistic)
+sur_1_year<-function(x)surv(1*1*1,lp=x)
+sur_3_year<-function(x)surv(1*1*3,lp=x)#3年生存,这里是天365 生存时间如果是月的话，改为12，年的话，直接是1
+sur_5_year<-function(x)surv(1*1*5,lp=x)#5年生存
+sur_10_year<-function(x)surv(1*1*10,lp=x)#10年
+nom_sur <- nomogram(coxno,fun=list(sur_3_year,sur_5_year,sur_10_year),lp= F,funlabel=c('3-Year Survival','5-Year survival',"10-Year survival"),maxscale=100,fun.at=c('0.9','0.8','0.7','0.6','0.5','0.4','0.3','0.2','0.1'))
+predict(coxno,newdata=tcga)
+
+#画列线图
+pdf("nom.pdf",15,10)
+plot(nom_sur,xfrac=0.25)
+dev.off()
+####画一个比较酷的列线图（竞争性比例风险模型，在这里不适用）
+#library(regplot)
+#library("survival")
+#library("survminer")
+#res.cox<-coxph(Surv(life_time,status)~risk+pathologic_M+pathologic_N+pathologic_T+pathologic_stage+TMB+immune+age, data=tcga)
+#nom1<-regplot(res.cox,clickable = T,points = T,rank = "sd",failtime = c(3,5),prfail = T)
+
+
+
+###time_dependent ROC曲线   ##记着这是四个基因模型的ROC曲线，不是列线图的曲线
+##第一种 一年/三年/五年分开作图
+library(timeROC)
+library(survival)
+bc<-tcga
+cox.timp2<-coxph(Surv(bc$life_time,bc$status==1)~bc$riskscore)
+lpFit<-cox.timp2$linear.predictors
+roc.fit<-timeROC(T=bc$life_time,delta = bc$status,marker = lpFit,
+                 cause = 1,##,阳性结局赋值，比如死亡，复发的赋值
+                 weighting = "marginal",#marginal 大概就是用k-m，或填写“cox"
+                 times = c(1*c(1,3,5)),##1年，三年，五年.如果我们时间是月(12*c(1,3,5))，是日(365*c(1,3,5))
+                 ROC=T,iid=T)
+library(tidyverse)
+CI95<-confint(roc.fit)[1]%>%unlist()
+ROC_1<-paste0(":",roc.fit$AUC[1]%>%as.numeric()%>%round(.,2),"(",CI95[1],"-",CI95[4],")")
+ROC_3<-paste0(":",roc.fit$AUC[2]%>%as.numeric()%>%round(.,2),"(",CI95[2],"-",CI95[5],")")
+ROC_5<-paste0(":",roc.fit$AUC[3]%>%as.numeric()%>%round(.,2),"(",CI95[3],"-",CI95[6],")")
+#作图
+pdf("time_roc.pdf",onefile = F)
+plot(roc.fit,time = 1*1,col = "blue",add = F,title = F)##add指是否添加在上面一张图中
+plot(roc.fit,time = 1*3,col = "red",add = T)
+plot(roc.fit,time = 1*5,col = "green",add = T)
+title(main = "Time-dependent ROC curve")
+legend("bottomright",
+       legend = c(paste0("AUC at 1 year",ROC_1),paste0("AUC at 3 year",ROC_3),paste0("AUC at 5 year",ROC_5)),
+       lty = c("solid","solid","solid"),
+       col = c("blue","red","green"),
+       bty = "n")
+dev.off()
+
+
+##第二种 时间是连续变量一根曲线,即连续性时间依赖曲线
+library(timeROC)
+library(survival)
+bc<-tcga
+cox.timp2<-coxph(Surv(bc$life_time,bc$status==1)~bc$coxtrainscore)
+lpFit<-cox.timp2$linear.predictors
+roc.fit<-timeROC(T=bc$life_time,delta = bc$status,marker = lpFit,
+                 cause = 1,##,阳性结局赋值，比如死亡，复发的赋值
+                 weighting = "marginal",#marginal 大概就是用k-m，或填写“cox"
+                 times = c(1*c(1,3,5)),##1年，三年，五年.如果我们时间是月(12*c(1,3,5))，是日(365*c(1,3,5))
+                 )
+plotAUCcurve(roc.fit,col = "red")
+legend("topright",legend = c("Time-dependent ROC curve"),lty = c("solid"),col = c("red"),bty = "n")
+
+
+
+
+##DCA曲线
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+source("stdca.R")
+library(survival)
+Srv<-Surv(tcga$life_time,tcga$status)
+#计算两个模型的1.5年癌症发生率补数
+coxmod1<-coxph(Srv~risk+pathologic_M+pathologic_N+pathologic_T+pathologic_stage+TMB+immune+age,data = tcga)
+coxmod2<-coxph(Srv~pathologic_M,data = tcga)
+coxmod3<-coxph(Srv~risk,data = tcga)
+tcga$nomogram<-c(1-(summary(survfit(coxmod1,newdata=tcga),times=5)$surv))##计算5年的预测概率
+tcga$pathologic_M1<-c(1-(summary(survfit(coxmod2,newdata=tcga),times=5)$surv))
+tcga$riskmodel<-c(1-(summary(survfit(coxmod3,newdata=tcga),times=5)$surv))
+stdca(data = tcga,outcome = "status",ttoutcome = "life_time",timepoint = 5,
+      predictors = c("pathologic_M1","nomogram"),xstop = 0.5,smooth = T,intervention="FALSE",probability = c("FALSE","TRUE"))##如果是单因素分析，probability = F
+
+??stdca
+#k-m生存曲线
+library("survival")
+library("survminer")
+fit <- survfit(Surv(life_time,status) ~risk, data = tcga)
+ggsurvplot(fit, data = tcga,  conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+
+
+
+
+
+
+
+##calibration曲线
+
+cal_3 <- calibrate(coxno, cmethod="KM", method="boot", u=1*1*3, m= 270, B=1000) ###m= 总样本数除以点数，一般是3个点，但不能恰好，必须比余数小一点
+cal_5 <- calibrate(coxno, cmethod="KM", method="boot", u=1*1*5, m= 270, B=1000)
+summary(cal_3)
+#画校准图
+pdf("calibrate5.pdf",12,8)
+par(mar = c(10,5,3,2),cex = 1.0)
+
+p1<-plot(cal_3,lwd=3,lty=2,errbar.col="black",xlim = c(0.7,1),ylim = c(0.7,1),xlab ="Model Predicted Survival",ylab="Actual Survival",col="blue")
+par(new=TRUE)
+p2<-plot(cal_5,lwd=3,lty=2,errbar.col="red",xlim = c(0.7,1),ylim = c(0.7,1),xlab ="Model Predicted Survival",ylab="Actual Survival",col="red")
+     
+      
+###PFI效果欠佳，暂不做##################################################
+###PFI效果欠佳，暂不做##################################################
+###PFI效果欠佳，暂不做##################################################
+###PFI效果欠佳，暂不做##################################################
+###PFI效果欠佳，暂不做##################################################
+###PFI效果欠佳，暂不做##################################################
+###做PFI的ROC曲线和DCA曲线,PPI k-m分析
+#PPI的k-m分析
+#首先删除PFItime为0的数字，有12个
+tcgaPFI<-tcga[tcga$PFI.time!=0,]
+fit <- survfit(Surv(PFI.time,PFI) ~risk, data = tcgaPFI)
+ggsurvplot(fit, data = tcgaPFI,  conf.int = TRUE,pval = T,
+           tables.height = 0.2,tables.theme = theme_cleantable())
+
+###time_dependent ROC曲线 PFI
+##第一种 一年/三年/五年分开作图
+library(timeROC)
+library(survival)
+bc<-tcgaPFI
+cox.timp2<-coxph(Surv(bc$PFI.time,bc$PFI==1)~bc$riskscore)
+lpFit<-cox.timp2$linear.predictors
+roc.fit<-timeROC(T=bc$PFI.time,delta = bc$PFI,marker = lpFit,
+                 cause = 1,##,阳性结局赋值，比如死亡，复发的赋值
+                 weighting = "marginal",#marginal 大概就是用k-m，或填写“cox"
+                 times = c(1*c(1,3,5)),##1年，三年，五年.如果我们时间是月(12*c(1,3,5))，是日(365*c(1,3,5))
+                 ROC=T,iid=T)
+library(tidyverse)
+CI95<-confint(roc.fit)[1]%>%unlist()
+ROC_1<-paste0(":",roc.fit$AUC[1]%>%as.numeric()%>%round(.,2),"(",CI95[1],"-",CI95[4],")")
+ROC_3<-paste0(":",roc.fit$AUC[2]%>%as.numeric()%>%round(.,2),"(",CI95[2],"-",CI95[5],")")
+ROC_5<-paste0(":",roc.fit$AUC[3]%>%as.numeric()%>%round(.,2),"(",CI95[3],"-",CI95[6],")")
+#作图
+pdf("time_roc.pdf",onefile = F)
+plot(roc.fit,time = 1*1,col = "blue",add = F,title = F)##add指是否添加在上面一张图中
+plot(roc.fit,time = 1*3,col = "red",add = T)
+plot(roc.fit,time = 1*5,col = "green",add = T)
+title(main = "Time-dependent ROC curve")
+legend("bottomright",
+       legend = c(paste0("AUC at 1 year",ROC_1),paste0("AUC at 3 year",ROC_3),paste0("AUC at 5 year",ROC_5)),
+       lty = c("solid","solid","solid"),
+       col = c("blue","red","green"),
+       bty = "n")
+dev.off()
+######################################################################
+#######################################################################
+#################################################################
+#################################################################
+
+coxgenename
+#"ENSG00000136286.13"/MYO1G, "ENSG00000175463.10"/TBC1D10C "ENSG00000110876.9"/SELPLG   基质基因"ENSG00000172061.8"/LRRC15 
+
+##TCGA和GTEX中基因的表达差异
+library(UCSCXenaShiny)
+vis_toil_TvsN_cancer(
+  Gene = "LRRC15",
+  Mode = "Violinplot",
+  Show.P.value = TRUE,
+  Show.P.label = TRUE,
+  Method = "wilcox.test",
+  values = c("#DF2020", "#DDDF21"),
+  TCGA.only = FALSE,
+  Cancer = "BRCA")
+vis_toil_TvsN_cancer(
+  Gene = "SELPLG",
+  Mode = "Violinplot",
+  Show.P.value = TRUE,
+  Show.P.label = TRUE,
+  Method = "wilcox.test",
+  values = c("#DF2020", "#DDDF21"),
+  TCGA.only = FALSE,
+  Cancer = "BRCA")
+vis_toil_TvsN_cancer(
+  Gene = "TBC1D10C",
+  Mode = "Violinplot",
+  Show.P.value = TRUE,
+  Show.P.label = TRUE,
+  Method = "wilcox.test",
+  values = c("#DF2020", "#DDDF21"),
+  TCGA.only = FALSE,
+  Cancer = "BRCA")
+vis_toil_TvsN_cancer(
+  Gene = "MYO1G",
+  Mode = "Violinplot",
+  Show.P.value = TRUE,
+  Show.P.label = TRUE,
+  Method = "wilcox.test",
+  values = c("#DF2020", "#DDDF21"),
+  TCGA.only = FALSE,
+  Cancer = "BRCA")
+
+###将这些基因分为高低两组，计算它与生存的关系K-m曲线(os,PFI）
+#第一步提取数据
+save(cox_os_PPI_data,file = "cox_os_PPI_data.Rdata")
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load(file = "cox_os_PPI_data.Rdata")
+gene_sur<-cbind(cox_os_PPI_data[,c(1:26)],cox_os_PPI_data[,coxgenename])##这里面coxgenename未保存，故直接填写基因名
+gene_sur<-cbind(cox_os_PPI_data[,c(1:26)],cox_os_PPI_data[,c("ENSG00000136286.13", "ENSG00000175463.10", "ENSG00000110876.9", "ENSG00000172061.8")])
+##小修时添加的
+#### 各亚型中TBC1D10C的表达差异#####
+TBC<-gene_sur[,c(10,28)]
+colnames(TBC)<-c("subtybe","num")
+table(TBC$subtybe)
+table(primary.site.breast2010.4$Derived.AJCC.N..7th.ed..2010.2015.)
+oldval<-c("Basal","Her2","LumA","LumB","Normal","")
+newval<-factor(c("Basal","Her2","LumA","LumB","unknown","unknown"))
+TBC$subtybe1<-newval[match(TBC$subtybe,oldval)]
+table(TBC$subtybe1)
+table(TBC$subtybe)
+TBC$num2<-log(TBC$num)
+library(ggplot2)
+library(ggpubr)
+ggplot(TBC,aes(x = factor(subtybe1),y = num2,fill = factor(subtybe1)))+
+  geom_boxplot()+
+  theme_classic()+stat_compare_means()
+  scale_fill_lancet()+theme(legend.position = c(.7,.9))###+theme(legend.position = c(.8,.8)##geom_violin()
+ggplot(TBC,aes(x = factor(subtybe1),y = num2,fill = factor(subtybe1)))+
+  geom_boxplot()+stat_
+    
+    
+ggplot(TBC,aes(x = factor(subtybe1),y = num2,fill = factor(subtybe1)))+
+  geom_violin()+geom_boxplot()+
+  theme_classic()
+
+ggplot(TBC,aes(x = factor(subtybe1),y = num2,fill = factor(subtybe1)))+
+  geom_boxplot()+geom_violin()+
+  theme_classic()+stat_compare_means(label="p.signif")
+
+ggplot(data =TBC, aes(x = factor(subtybe1),y = num2,fill = factor(subtybe1)))+
+  geom_boxplot(aes(position = position_dodge(1),width=.3,outlier.shape = NA))+
+  geom_violin(position = position_dodge(1),scale = "width",fill=NA)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,vjust = 1, colour = "black"))+
+  stat_compare_means(label = "p.signif")
+ggplot(data =TBC, aes(x = factor(subtybe1),y = num2,fill = factor(subtybe1)))+
+  geom_boxplot(aes(position = position_dodge(1),outlier.shape = NA))+
+  geom_violin(position = position_dodge(1),fill=NA)+
+  theme_classic()+stat_compare_means()
+aes(colour = factor(subtybe1)),aes(group=subtybe1)
+######ggplot(data =dd_gsva1, aes(x = celltype, y = NES))+
+  ####geom_boxplot(aes(fill = TBC1D10C),position = position_dodge(1),width=.3,outlier.shape = NA)+
+  ####geom_violin(aes(colour = TBC1D10C),position = position_dodge(1),scale = "width",fill=NA)+
+  ####theme_bw()+
+  ####theme(axis.text.x = element_text(angle = 45, hjust = 1,vjust = 1, colour = "black"))+
+  ####stat_compare_means(aes(group=TBC1D10C), label = "p.signif")
+                                                                 
+                                   
+##将基因根据中位值分为高低两组
+gene_sur$ENSG00000136286.13<-ifelse(gene_sur$ENSG00000136286.13>median(gene_sur$ENSG00000136286.13),"high","low")
+gene_sur$ENSG00000175463.10<-ifelse(gene_sur$ENSG00000175463.10>median(gene_sur$ENSG00000175463.10),"high","low")
+gene_sur$ENSG00000110876.9<-ifelse(gene_sur$ENSG00000110876.9>median(gene_sur$ENSG00000110876.9),"high","low")
+gene_sur$ENSG00000172061.8<-ifelse(gene_sur$ENSG00000172061.8>median(gene_sur$ENSG00000172061.8),"high","low")
+
+table(gene_sur$ENSG00000136286.13)
+
+library("survival")
+library("survminer")
+??ggsurvplot
+##第一步k-m生存分析(os)
+diff1<-survdiff(Surv(life_time,status) ~ENSG00000136286.13, data = gene_sur)
+p_value1<-signif((1 - pchisq(diff1$chisq,df=1)),3)
+diff2<-survdiff(Surv(life_time,status) ~ENSG00000175463.10, data = gene_sur)
+p_value2<-signif((1 - pchisq(diff2$chisq,df=1)),3)
+diff3<-survdiff(Surv(life_time,status) ~ENSG00000110876.9, data = gene_sur)
+p_value3<-signif((1 - pchisq(diff3$chisq,df=1)),3)
+diff4<-survdiff(Surv(life_time,status) ~ENSG00000172061.8, data = gene_sur)
+p_value4<-signif((1 - pchisq(diff4$chisq,df=1)),3)
+
+##第二部作图(os)
+fit1 <- survfit(Surv(life_time,status) ~ENSG00000136286.13, data = gene_sur)
+ggsurvplot(fit1, data = gene_sur, risk.table = TRUE, conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+fit2<-survfit(Surv(life_time,status) ~ENSG00000175463.10, data = gene_sur)
+ggsurvplot(fit2, data = gene_sur, risk.table = TRUE, conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+fit3<-survfit(Surv(life_time,status) ~ENSG00000110876.9, data = gene_sur)
+ggsurvplot(fit3, data = gene_sur, risk.table = TRUE, conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+fit4<-survfit(Surv(life_time,status) ~ENSG00000172061.8, data = gene_sur)
+ggsurvplot(fit4, data = gene_sur, risk.table = TRUE, conf.int = TRUE,pval = T,surv.median.line = "hv",
+           tables.height = 0.2,tables.theme = theme_cleantable())
+
+#将时间改为年
+gene_sur$PFI.time<-gene_sur$PFI.time/365
+##PFI计算 （小修时特地计算一下）
+diff5<-survdiff(Surv(PFI.time,PFI) ~ENSG00000136286.13, data = gene_sur)
+p_value5<-signif((1 - pchisq(diff5$chisq,df=1)),3)
+diff6<-survdiff(Surv(PFI.time,PFI) ~ENSG00000175463.10, data = gene_sur)
+p_value6<-signif((1 - pchisq(diff6$chisq,df=1)),3)
+diff7<-survdiff(Surv(PFI.time,PFI) ~ENSG00000110876.9, data = gene_sur)
+p_value7<-signif((1 - pchisq(diff7$chisq,df=1)),3)
+diff8<-survdiff(Surv(PFI.time,PFI) ~ENSG00000172061.8, data = gene_sur)
+p_value8<-signif((1 - pchisq(diff8$chisq,df=1)),3)
+
+#####PFI图
+
+
+fit1 <- survfit(Surv(PFI.time,PFI) ~ENSG00000136286.13, data = gene_sur)
+ggsurvplot(fit1, data = gene_sur, risk.table = TRUE, conf.int = TRUE,pval = T,
+           tables.height = 0.2,tables.theme = theme_cleantable())
+fit2<-survfit(Surv(PFI.time,PFI) ~ENSG00000175463.10, data = gene_sur)
+ggsurvplot(fit2, data = gene_sur, risk.table = TRUE, conf.int = TRUE,pval = T,
+           tables.height = 0.2,tables.theme = theme_cleantable())
+fit3<-survfit(Surv(PFI.time,PFI) ~ENSG00000110876.9, data = gene_sur)
+ggsurvplot(fit3, data = gene_sur, risk.table = TRUE, conf.int = TRUE,pval = T,
+           tables.height = 0.2,tables.theme = theme_cleantable())
+fit4<-survfit(Surv(PFI.time,PFI) ~ENSG00000172061.8, data = gene_sur)
+ggsurvplot(fit4, data = gene_sur, risk.table = TRUE, conf.int = TRUE,pval = T,
+           tables.height = 0.2,tables.theme = theme_cleantable())
+
+save(gene_sur,file = "gene_sur.Rdata")
+##发现"ENSG00000175463.10"/TBC1D10C与患者的OS和PFI都有意义
+
+
+
+
+
+
+
+
+######################停止运行#########################################
+######################停止运行#########################################
+######################停止运行#########################################
+
+data("immune_sig")##提取免疫相关的细胞对应的基因以及在TCGA中的表达
+test<-immune_sig[1:100,1:10]
+immunename<-immune_sig$SetName
+intersect("APM1",immunename)
+data("tmb_data")###肿瘤突变负荷数据
+test<-tmb_data
+#查看基因和免疫特征的热图,泛癌数据
+vis_gene_immune_cor(
+  Gene = "TBC1D10C",
+  Cor_method = "spearman",
+  Immune_sig_type = "Cibersort"
+)
+##查看肿瘤突变负荷和基因的关系
+vis_gene_tmb_cor(Gene = "TBC1D10C", Cor_method = "spearman")
+#用COX回归建模，并预测分数。
+#siggenename1<-c("ENSG00000149781.11","ENSG00000128340.13","ENSG00000140368.11")
+coxmultidata<-cbind(unicoxdata2[,c(1,2)],unicoxdata2[,siggenename1])
+coxmulti<-coxph(Surv(life_time,status)~.,data = coxmultidata)
+summary(coxmulti)
+#coxph(formula = Surv(life_time, status) ~ ., data = coxmultidata)
+
+#n= 917, number of events= 118 
+
+#coef exp(coef)  se(coef)      z Pr(>|z|)
+#ENSG00000149781.11 -0.007464  0.992563  0.015035 -0.496    0.620
+#ENSG00000138964.15 -0.029085  0.971334  0.081044 -0.359    0.720
+#ENSG00000128340.13 -0.007980  0.992052  0.010035 -0.795    0.427
+#ENSG00000140368.11 -0.015599  0.984522  0.036723 -0.425    0.671
+
+#exp(coef) exp(-coef) lower .95 upper .95
+#ENSG00000149781.11    0.9926      1.007    0.9637     1.022
+#ENSG00000138964.15    0.9713      1.030    0.8287     1.139
+#ENSG00000128340.13    0.9921      1.008    0.9727     1.012
+#ENSG00000140368.11    0.9845      1.016    0.9162     1.058
+
+#Concordance= 0.604  (se = 0.025 )
+#Likelihood ratio test= 17.1  on 4 df,   p=0.002
+#Wald test            = 11.8  on 4 df,   p=0.02
+#Score (logrank) test = 11.49  on 4 df,   p=0.02
+#####cox_model<-step(coxmulti,direction = "both")
+#####summary(cox_model)
+shapiro.test(coxscore)
+coxscore<-predict(coxmulti,type = "risk",newdata = coxmultidata)
+shapiro.test(coxscore)##p<0.05 不适合正态分布，故用中位值。如果是正态分布，就用均值mean
+coxrisk<-as.vector(ifelse(coxscore>median(coxscore),"high","low"))
+riskdata<-cbind(unicoxdata2[,c(1,2)],coxscore,coxrisk)
+colnames(riskdata)<-c("life_span","status","riskscore","risk")
+
+lastcoxdata<-cbind(riskdata[,c(1,2,3)],newdata2[,c(11:16)])
+kmdata<-cbind(riskdata[,c(1,2,3,4)],newdata2[,c(11:16)])
+#####k_m生存曲线
+##生存分析
+diff<-survdiff(Surv(life_span,status)~risk,data = kmdata)
+#p_value<-signif((1 - pchisq(diff$chisq,df=1)),3)
+#p_value
+fit_curve<-survfit(Surv(life_span,status)~risk,data = kmdata)##生存曲线做图
+plot(fit_curve,col=c("red","blue"),xlab = "time(years)",ylab = "survival rate",
+     main="survival curve of training set",mark.time=T)
+#legend(2,.4,paste("High risk (n=",nrow(trainriskdata[trainriskdata[,4]=="high",]),")",sep = ""),lty = NULL,text.col = "red",bty = "n")
+#legend(2,.3,paste("Low risk (n=",nrow(trainriskdata[trainriskdata[,4]=="low",]),")",sep = ""),lty = NULL,text.col = "blue",bty = "n")
+#legend(15,.2,paste("P value =",p_valuetrain,sep = ""),lty = NULL,col = "black",bty = "n")
+##ROC曲线
+library(survivalROC)
+roc<-survivalROC(Stime = kmdata$life_span,status = kmdata$status,marker = kmdata$riskscore,
+                 predict.time = 5,method = "KM")
+#par(oma=c(0.5,1,0,1),font.lab=1.5,font.axis=1.5)
+plot(roc$FP, roc$TP, type="l", xlim=c(0,1), ylim=c(0,1),col='red',xlab="1-Specificity",ylab="Sensitivity",main=paste(" ROC curve (AUC = 0.746)"))
+
+#abline(0,1)
+roc$AUC
+######################停止运行#########################################
+######################停止运行#########################################
+######################停止运行#########################################
+
+
+#接上面。##发现"ENSG00000175463.10"/TBC1D10C与患者的OS和PFI都有意义
+
+### 单基因相关性GSEA .通过相关性分析，找到与单基因相关的一些基因，并安装相关性分数排序建立genelist.
+##然后在基因集中进行GSEA分析，找到和单基因相关的基因主要在哪些通路中被激活或抑制。也可以找出相关性有意义的基因做GO，KEEG分析
+### 注释任意基因，编码，非编码，microRNA，甲基化位点
+
+
+y <- as.numeric(exp["ENSG00000175463.10",])  ##提取所有的基因名为行名
+rownames <- rownames(exp)
+cor_data_df <- data.frame(rownames)
+### 批量相关性分析,找样本中一个基因ENSG00000175463.10与所有基因的相关性
+for (i in 1:length(rownames)){
+  print(i)
+  test <- cor.test(as.numeric(exp[i,]),y,method="spearman")
+  cor_data_df[i,2] <- test$estimate
+  cor_data_df[i,3] <- test$p.value
+}
+names(cor_data_df) <- c("symbol","correlation","pvalue")
+
+rownames(cor_data_df)<-substr(cor_data_df$symbol,1,15)
+
+## 基因名转换
+library(clusterProfiler)
+x<-substr(cor_data_df$symbol,1,15)
+gene = bitr(x, fromType="ENSEMBL", toType="SYMBOL", OrgDb="org.Hs.eg.db")##"SYMBOL","ENSEMBL","ENTREZID"
+###将没有ENTREZID的除掉
+
+cor_data_df1<-cor_data_df[rownames(cor_data_df)%in%gene$ENSEMBL,]
+
+gene1<-gene[!duplicated(gene$ENSEMBL),]
+gene2<-gene1[!duplicated(gene1$SYMBOL),]
+cor_data_df2<-cbind(cor_data_df1,gene1$SYMBOL)
+cor_data_df3<-cor_data_df2[!duplicated(cor_data_df2$`gene1$SYMBOL`),]
+cor_data_df4<-cor_data_df3[!duplicated(cor_data_df3$correlation),]###下面做图时发现排列顺序一致时不能运行，故将相关性一致的去重
+
+## geneList 三部曲
+## 1.获取基因logFC
+geneList <- cor_data_df4$correlation
+## 2.命名
+names(geneList) = cor_data_df4$`gene1$SYMBOL`
+
+table(duplicated(cor_data_df4$`gene1$SYMBOL`))
+
+## 3.排序很重要
+
+geneList = sort(geneList, decreasing = TRUE)
+class(geneList)
+?sort
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+
+
+
+### 基因集
+library(msigdbr)
+library(dbplyr)
+dd <- msigdbr(species = "Homo sapiens")
+table(dd$gs_cat)
+hallmarks <- dd %>% 
+  filter(gs_cat == "H") %>% 
+  select(gs_name,gene_symbol)
+
+hallmarks<-dd[dd$gs_cat=="H",]
+hallmarks<-hallmarks[,c(2,8)]
+### GSEA分析
+library(clusterProfiler)
+y <- GSEA(geneList,TERM2GENE =hallmarks,minGSSize = 100,maxGSSize = 10000,pvalueCutoff = 0.01)
+cnetplot(y,foldChange = geneList)
+names(geneList)
+?GSEA
+### 看整体分布
+library(ggplot2)
+clusterProfiler::dotplot(y,showCategory=12,split=".sign")+facet_grid(~.sign)
+
+
+### 选择需要呈现的来作图
+save(y,yd,file = "gsea.Rdata")
+yd <- data.frame(y)
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load(file = "gsea.Rdata")
+library(enrichplot)
+gseaplot2(y,"HALLMARK_P53_PATHWAY",color = "red",pvalue_table = T) #从yd中随便选取一个通路作图
+gseaplot2(y,11,color = "red",pvalue_table = T)  ##取第十一个通路作图 ID第十一行
+ridgeplot(y)##层峦图
+?ridgeplot
+gseaplot2(y, geneSetID = c(1,2,4,5,6,7))
+
+
+### 自己添加文字加文字
+index <- "HALLMARK_MYOGENESIS"
+gseaplot2(y,index ,color = "green")
+
+anno <- yd[index , c("enrichmentScore","NES", "pvalue", "p.adjust")]
+colnames(anno)[1] <- "ES"
+lab <- paste0(names(anno), "=",  round(anno, 3), collapse="\n")
+
+gseaplot2(y,index,color = "green")+annotate("text",0.8, 0.8, label = lab, hjust=0, vjust=0,size = 5)
+
+
+
+###做基因和免疫相关细胞的关系 ssgsea分析。
+
+### 1.准备细胞marker
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+cellMarker <- data.table::fread("cellMarker.csv",data.table = F)
+colnames(cellMarker)[2] <- "celltype"
+##1.1.2将cellMarker转为以cellMarker$celltype分类的列表
+cellMarker <- lapply(split(cellMarker,cellMarker$celltype), function(x){
+  k3 = x$Metagene
+  unique(k3)
+})
+
+save(cellMarker,file = "cellMarker_ssGSEA.Rdata")
+
+
+### 2.准备表达量矩阵
+### 行是基因，列是样本
+##expr <- data.table::fread("exprMat.txt",data.table = F)
+library(clusterProfiler)
+rownames(exp)<-substr(rownames(exp),1,15)
+genenamechange = bitr(rownames(exp), fromType="ENSEMBL", toType="SYMBOL", OrgDb="org.Hs.eg.db")##"SYMBOL","ENSEMBL","ENTREZID"
+genenamechange1<-genenamechange[!duplicated(genenamechange$SYMBOL),]
+exp1<-exp[rownames(exp)%in%genenamechange1$ENSEMBL,]
+genenamechange2<-genenamechange1[!duplicated(genenamechange1$ENSEMBL),]
+rownames(exp1)<-genenamechange2$SYMBOL
+exp2<-t(exp1)
+
+#rownames(expr) <- expr[,1]
+#expr <- expr[,-1]
+exp1 <- as.matrix(exp1)    ##表达数据需是矩阵
+
+### 3.使用ssGSEA量化免疫浸润
+library(GSVA)
+gsva_data <- gsva(exp1,cellMarker, method = "ssgsea")
+
+### 简单作图看一下
+library(pheatmap)
+pheatmap(gsva_data, #热图的数据
+         cluster_rows = TRUE,#行聚类
+         cluster_cols = TRUE,#列聚类，可以看出样本之间的区分度
+         ##annotation_col =annotation_col, #标注样本分类
+         annotation_legend=TRUE, # 显示注释
+         show_rownames = T,# 显示行名
+         ##scale = "row", #以行来标准化
+         color =colorRampPalette(c("blue", "white","red"))(100),#调色
+         #filename = "heatmap_F.pdf",#是否保存
+         #cellwidth = 50, cellheight = 10,# 格子比例
+         fontsize = 10)
+?pheatmap
+
+#################################################################################
+#### 此时可以把表达量的数据变成清洁数???
+## 加载表达量数???,将mRNA表达数据和样本临床信息合???
+##现在将临床表型可以分组的各种信息或基因高低等放入量化数据中，便于后面分析
+
+### 量化结束，可以做点分析了
+
+
+### 特定癌种中，癌和癌旁的差异
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load(file = "pancancer_tcga_gsva.Rdata") ##从TCGA中提取所有癌症的免疫量化数据
+test2 <- tcga_gsva[1:10,1:40]
+
+table(tcga_gsva$type)
+library(dplyr)
+dd<- tcga_gsva%>% 
+  filter(type=="BRCA")%>% 
+  select(-c(4:34))%>% 
+  mutate(subtype = as.character(subtype)) %>% 
+  filter(subtype %in% c("01","11")) %>% 
+  mutate(sample = ifelse(subtype =="01","tumor","normal")) %>% 
+  select(sample,everything())###将sample这一列放在第一列???
+
+##将dd中gsva信息和exp2中的基因信息合并
+dd1<-dd[dd$subtype=="01",]
+dd2<-dd1[,-c(1,3,4)]
+
+dd2<-dd2[!duplicated(dd1$TCGA_id),]
+rownames(dd2)<-dd1$TCGA_id
+dd2<-dd2[,-1]
+
+TBC1D10C_exp<-as.data.frame(exp2[,"TBC1D10C"]) ###提取TBC1D10C基因信息
+names(TBC1D10C_exp)<-"TBC1D10C"
+rownames(TBC1D10C_exp)<-substr(rownames(TBC1D10C_exp),1,12)
+dd3<-dd2[rownames(dd2)%in%rownames(TBC1D10C_exp),]
+dd3$name<-rownames(dd3)
+TBC1D10C_exp$name<-rownames(TBC1D10C_exp)
+TBC1D10C_exp1<-TBC1D10C_exp[rownames(TBC1D10C_exp)%in%rownames(dd3),]
+
+dd_gsva<-merge(TBC1D10C_exp1,dd3,by.x="name",by.y="name")
+dd_gsva$TBC1D10C<-ifelse(dd_gsva$TBC1D10C>median(dd_gsva$TBC1D10C),"high","low")
+save(exp1,dd_gsva,file = "dd_gsva.Rdata")
+
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+load(file = "dd_gsva.Rdata")
+### 调整数据
+library(dplyr)
+library(tidyr)
+dd_gsva1<- dd_gsva %>% 
+  pivot_longer(cols=3:30, ###将3：30列进行由行变列，
+               names_to= "celltype", ##3：30列的列名放在一列
+               values_to = "NES")    ##3：30列的值放在一列
+
+library(ggplot2)
+library(ggpubr)
+### 箱线图?
+ggplot(data =dd_gsva1, aes(x = celltype, y = NES))+
+  geom_boxplot(aes(fill = TBC1D10C),outlier.shape = NA)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,vjust = 1, colour = "black"))+
+  stat_compare_means(aes(group=TBC1D10C), label = "p.signif")
+
+### 小提图?
+ggplot(data =dd_gsva1, aes(x = celltype, y = NES))+
+  geom_violin(aes(fill =  TBC1D10C),position = position_dodge(1),scale = "width")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,vjust = 1, colour = "black"))+
+  stat_compare_means(aes(group= RAC2), label = "p.signif")
+
+### 混合叠加
+ggplot(data =dd_gsva1, aes(x = celltype, y = NES))+
+  geom_boxplot(aes(fill = TBC1D10C),position = position_dodge(1),width=.3,outlier.shape = NA)+
+  geom_violin(aes(colour = TBC1D10C),position = position_dodge(1),scale = "width",fill=NA)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,vjust = 1, colour = "black"))+
+  stat_compare_means(aes(group=TBC1D10C), label = "p.signif")
+###################有点迷糊#####################
+###################有点迷糊#####################
+###################有点迷糊#####################
+###################有点迷糊#####################
+
+##发现是找单基因与免疫细胞相关性并做图
+
+rm(list = ls())
+load(file = "tcga_panmRNA_expr_with_clin.Rdata")
+test1 <- tcga_panmRNA_expr[1:10,1:40]
+
+load(file = "pancancer_tcga_gsva.Rdata")
+test2 <- tcga_gsva[1:10,1:40]
+### 提取乳腺癌的数据
+
+library(dplyr)
+## 获取表达量数据
+expr_data <- tcga_panmRNA_expr %>% 
+  filter(type=="BRCA") %>% 
+  dplyr::select(-c(1:35))
+test <- expr_data[1:10,1:10]
+
+## 获取免疫数据
+immu_data <- tcga_gsva %>% 
+  filter(type=="BRCA") %>% 
+  dplyr::select(-c(1:35))
+
+gene <- "TBC1D10C"
+y <- as.numeric(expr_data[,gene])
+
+cor_data <- do.call(rbind,lapply(colnames(immu_data),function(x){
+  dd <- cor.test(as.numeric(immu_data[,x]),y,method ="spearman",exact=FALSE)
+  data.frame(cell=x,cor=dd$estimate,p.value=dd$p.value)
+}))
+
+
+### 画图展示全貌
+library(dplyr)
+library(ggplot2)
+cor_data %>% 
+  filter(p.value <0.05) %>% 
+  ggplot(aes(cor,forcats::fct_reorder(cell,cor)))+
+  geom_segment(aes(xend=0,yend=cell))+
+  geom_point(aes(col=p.value,size=abs(cor)))+
+  scale_colour_gradientn(colours=c("#7fc97f","#984ea3"))+
+  #scale_color_viridis_c(begin = 0.5, end = 1)+
+  scale_size_continuous(range =c(2,8))+
+  theme_bw()+
+  ylab(NULL)
+
+### 筛选p值有意义的细胞
+imucells <- cor_data %>% 
+  filter(p.value <0.05) %>% 
+  arrange(desc(cor)) %>% 
+  pull(cell) %>% 
+  as.vector()
+
+imucells
+
+library(dplyr)
+library(ggplot2)
+library(ggplot2)
+##建立一个函数，用于书写后面图表的标题（用什么分析方法得到的统计结果）
+corr_eqn <- function(x,y,digits=2) {
+  test <- cor.test(x,y,method="spearman")
+  paste(paste0("n = ",length(x)),
+        paste0("r = ",round(test$estimate,digits),"(pearson)"),
+        paste0("p.value= ",round(test$p.value,digits)),
+        sep = ", ")
+}
+imucell <- "Activated CD8 T cell"
+gene<-"TBC1D10C"
+## 提取数据，建立一个只有基因和细胞两列数据的数据框，用于后面作图
+plot_df <- data.frame(
+  gene = expr_data[,gene],
+  imucell = immu_data[,imucell]
+)
+## 作图  
+plot_df %>% 
+  ggplot(aes(gene,imucell))+
+  geom_point(col="#984ea3")+
+  geom_smooth(method=lm, se=T,na.rm=T, fullrange=T,size=2,col="#fdc086")+
+  geom_rug(col="#7fc97f")+
+  theme_minimal()+
+  xlab(paste0(gene," (log2(TPM))"))+
+  ylab(paste0(imucell," (NES)"))+
+  labs(title = paste0(corr_eqn(plot_df$gene,plot_df$imucell)))+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.margin = margin(1, 1, 1, 1, "cm"))
+
+
+
+p1<-ggplot(aes(gene,imucell),data = plot_df)+
+  geom_point(col="#984ea3")+
+  geom_smooth(method=lm, se=T,na.rm=T, fullrange=T,size=2,col="#fdc086")+
+  geom_rug(col="#7fc97f")+
+  theme_minimal()+
+  xlab(paste0(gene," (log2(TPM))"))+
+  ylab(paste0(imucell," (NES)"))+
+  labs(title = paste0(corr_eqn(plot_df$gene,plot_df$imucell)))+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.margin = margin(1, 1, 1, 1, "cm"))
+
+plot_df1 <- data.frame(
+  gene1 = expr_data[,gene],
+  imucell1 = immu_data[,"Plasmacytoid dendritic cell"]
+)
+p2<-ggplot(aes(gene1,imucell1),data = plot_df1)+
+  geom_point(col="#984ea3")+
+  geom_smooth(method=lm, se=T,na.rm=T, fullrange=T,size=2,col="#fdc086")+
+  geom_rug(col="#7fc97f")+
+  theme_minimal()+
+  xlab(paste0(gene," (log2(TPM))"))+
+  ylab(paste0(imucell," (NES)"))+
+  labs(title = paste0(corr_eqn(plot_df1$gene1,plot_df1$imucell1)))+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.margin = margin(1, 1, 1, 1, "cm"))
+p1+p2
+library(patchwork)
+
+
+
+#######################################################
+#########################################################
+############################################
+###################################################
+
+
+
+
+
+###单基因与免疫细胞，TMB，肿瘤组织和正常组织的表达包
+library(UCSCXenaShiny)
+#PD1    ENSG00000188389
+#PD-L1   ENSG00000120217 
+#TIGIT  ENSG00000181847
+#CTLA-4 ENSG00000163599 
+#TIM-3  ENSG00000135077 (HAVCR2)
+#LAG-3  ENSG00000089692
+#TP53  ENSG00000141510
+#TBC1D10C  ENSG00000175463
+##提取治疗靶点的表达数据
+target<-c("ENSG00000188389","ENSG00000120217","ENSG00000181847","ENSG00000163599","ENSG00000135077","ENSG00000089692","ENSG00000175463")
+target_exp<-exp[target,]
+#更换基因名
+rownames(target_exp)<-c("PD1","PD-L1","TIGIT","CTLA-4","TIM-3","LAG-3","TBC1D10C")
+
+#和弦图
+install.packages('circlize')
+library(circlize)
+
+#set.seed(999)
+#mat = matrix(sample(18, 18), 3, 6)
+#rownames(mat) = paste0("S", 1:3)
+#colnames(mat) = paste0("E", 1:6)
+###画出行和列之间的和弦图
+#chord = data.frame(from = rep(rownames(mat), times = ncol(mat)),
+#to = rep(colnames(mat), each = nrow(mat)),
+#value = as.vector(mat),
+#stringsAsFactors = FALSE) ###画出行和列之间的和弦图
+
+#chordDiagram(mat)
+#chordDiagram(chord)
+#circos.clear()  ##返回默认设置
+
+
+library(circlize)
+
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+chord_target_exp<-t(target_exp) ##
+cor_target<-cor(chord_target_exp)##发现TP53和他们之间没有什么相关性 故删除TP53
+cor_target<-cor_target[-7,-7]
+save(chord_target_exp,cor_target,file = "immunechenkpoint.Rdata")
+col_fun <- colorRamp2(c(-1, 0, 1), c("green", "white", "red"))
+chordDiagram(cor_target, grid.col = 1:7, symmetric = TRUE, col = col_fun,scale = T)
+title("symmetric = TRUE") # 增加标题
+circos.clear()
+
+chordDiagram(cor_mat, grid.col = 1:5, col = col_fun)
+title("symmetric = FALSE")
+circos.clear()
+
+##相关性的方块热图
+
+library(corrplot)
+#计算相关系数矩阵
+col3 <- colorRampPalette(c("green", "white", "red")) #自定义指定梯度颜色 corrgram也可以指定 参见《R语言实战》第一版 P259
+cor.plot <- corrplot(corr = cor_target,col=col3(10),type="upper",tl.pos="d",tl.cex = 0.75) #画右上方 方法默认“圆形“
+cor.plot <- corrplot(corr = cor_target,add=TRUE, type="lower",col=col3(10),method="pie",addCoef.col="black",tl.pos="n",cl.pos = "n",diag = F)
+
+## method 有六种方法 "circle", "square", "ellipse", "number", "shade","color", "pie"
+
+####做两个三表一图。第一个 TCGA数据库中患者的临床基线资料。第二个临床基线资料和单基因的关系
+##整理数据
+load(file = "clin_immune_phyno_status_fix4.Rdata")
+load(file = "wgcna_data.Rdata")
+##发现样本数据不一致，
+
+table(colnames(exp)%in%rownames(clin_immune_phyno_status_fix4))
+table(rownames(clin_immune_phyno_status_fix4)%in%colnames(exp))
+characteristicdata<-clin_immune_phyno_status_fix4[rownames(clin_immune_phyno_status_fix4)%in%colnames(exp),]
+aa<-t(exp)
+test<-aa2[1:10,1:10]
+aa2<-aa[sort(rownames(aa),decreasing = F),]
+aa2<-as.data.frame(aa2)
+match(rownames(characteristicdata),rownames(aa2))
+characteristicdata1<-cbind(characteristicdata[,c(1,2,4,5,7:15,21,22)],aa2[,c("ENSG00000175463.10")])
+fix(characteristicdata1)
+characteristicdata1$TBC1D10C<-ifelse(characteristicdata1$ENSG00000175463.10>median(characteristicdata1$ENSG00000175463.10),"high","low")
+characteristicdata1$PFI.time<-characteristicdata1$PFI.time/365
+characteristicdata2<-characteristicdata1[,-16]
+characteristicdata2$ER_Status<-ifelse(characteristicdata2$ER_Status==""|characteristicdata$ER_Status=="Indeterminate","unkonw",characteristicdata$ER_Status)
+characteristicdata2$PR_Status<-ifelse(characteristicdata2$PR_Status==""|characteristicdata$PR_Status=="Indeterminate","unkonw",characteristicdata$PR_Status)
+characteristicdata2$HER2_Status<-ifelse(characteristicdata2$HER2_Status==""|characteristicdata2$HER2_Status=="Indeterminate"|characteristicdata2$HER2_Status=="Equivocal","unkonw",characteristicdata2$HER2_Status)
+characteristicdata2$subset<-ifelse(characteristicdata2$subset==""|characteristicdata2$subset=="Normal","unkonw",characteristicdata2$subset)
+library(tableone)
+library(survival)
+  
+CreateTableOne(data=characteristicdata2)
+##定义分裂变量
+colnames(characteristicdata2)
+catVars<-c("status","ER_Status","PR_Status","HER2_Status","subset","M stage","N stage","T stage","ACJJ","TBC1D10C")
+tab2<-CreateTableOne(data=characteristicdata2,factorVars = catVars)
+print(tab2,showALLlevels=T)
+summary(tab2)  
+#检验连续变量是否正态分布，正态用均值，非正态用中位数
+
+shapiro.test(characteristicdata2$strmal_score)##p<0.05 不适合正态分布
+shapiro.test(characteristicdata2$immune_score)
+shapiro.test(characteristicdata2$age)
+shapiro.test(characteristicdata2$life_time)
+shapiro.test(characteristicdata2$PFI.time)
+shapiro.test(characteristicdata2$TMB)
+
+#因为所有的连续变量都是非正太分布，故nonnormal=T,如果只有几个不是正态分布，则nonnormal=c("","")将该列输入
+print(tab2,nonnormal = T)
+
+##下面进行比较患者两组之间的基线特征，我们这里是TBC1D10C，高低两组
+tab3<-CreateTableOne(strata = "TBC1D10C",data = characteristicdata2,factorVars = catVars,addOverall = T)
+print(tab3,nonnormal = T,exact = c("M stage","ACJJ"))##有的小于5，用fisher精确检验
+##输出数据
+tab4<-print(tab3,nonnormal = T,exact = c("M stage","ACJJ"),quote=F,noSpaces=T,printToggle=T)
+
+write.csv(tab4,file = "characteristic_data.csv")
+
+x<-matrix(c(2,445,14,435),ncol=2,nrow=2)
+
+fisher.test(x)$p.value
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###全部结束###########################################
+###全部结束###########################################
+###全部结束###########################################
+###全部结束###########################################
+###全部结束###########################################
+###全部结束###########################################
+
+
+test<-read.delim2(file = "mRNA expression (RNAseq)_ TBC1D10C.txt")
+test1<-t(test)
+
+
+
+
+
+
+
+
+
+####查看肿瘤突变负荷相关信息
+library(UCSCXenaShiny)
+vis_toil_TvsN_cancer(
+  Gene = "FERMT3",
+  Mode = "Violinplot",
+  Show.P.value = TRUE,
+  Show.P.label = TRUE,
+  Method = "wilcox.test",
+  values = c("#DF2020", "#DDDF21"),
+  TCGA.only = FALSE,
+  Cancer = "BRCA")
+vis_toil_TvsN_cancer(
+  Gene = "RAC2",
+  Mode = "Violinplot",
+  Show.P.value = TRUE,
+  Show.P.label = TRUE,
+  Method = "wilcox.test",
+  values = c("#DF2020", "#DDDF21"),
+  TCGA.only = FALSE,
+  Cancer = "BRCA")
+vis_toil_TvsN_cancer(
+  Gene = "PSTPIP1",
+  Mode = "Violinplot",
+  Show.P.value = TRUE,
+  Show.P.label = TRUE,
+  Method = "wilcox.test",
+  values = c("#DF2020", "#DDDF21"),
+  TCGA.only = FALSE,
+  Cancer = "BRCA")
+?vis_toil_TvsN_cancer()
+devtools::install_github("jespermaag/gganatogram")
+??devtools
+app_run()
+data("immune_sig")##提取免疫相关的细胞对应的基因以及在TCGA中的表达
+test<-immune_sig[1:100,1:10]
+immunename<-immune_sig$SetName
+intersect("APM1",immunename)
+data("tmb_data")###肿瘤突变负荷数据
+all_tumor_TMB<-tmb_data
+save(all_tumor_TMB,BRCA_tmb,file = "all_tumor_TMB.Rdata")
+BRCA_tmb<-all_tumor_TMB[all_tumor_TMB$Cohort=="BRCA",]
+BRCA_tmb<-BRCA_tmb[!duplicated(BRCA_tmb$Patient_ID),]
+BRCA_tmb<-BRCA_tmb[BRCA_tmb$Non_silent_per_Mb!=0,]
+##将TMB数据加载到表达量数据和表型数据中
+datTraits2<-datTraits
+datTraits2$Tumor_Sample_ID<-rownames(datTraits2)
+DDDD<-merge(datTraits2,BRCA_tmb,by = "Tumor_Sample_ID" )##只有863个样本，仅用于做相关性分析和两组比较
+coor<-cor(DDDD$strmal_score,DDDD$Non_silent_per_Mb)##发现没什么相关性
+
+
+summary(coor)
+
+#查看基因和免疫特征的热图
+vis_gene_immune_cor(
+  Gene = "RAC2",
+  Cor_method = "spearman",
+  Immune_sig_type = "Cibersort"
+)
+##查看肿瘤突变负荷和基因的关系
+vis_gene_tmb_cor(Gene = "RAC2", Cor_method = "spearman")
+
+
+
+
+##找出免疫相关基因集
+
+
+
+dd <- data.frame(group= datTraits$condition,
+                 gene=datExpr[,"ENSG00000179833"])
+library(ggplot2)
+ggplot(dd,aes(x = group,y = gene)) +
+  geom_boxplot(aes(fill=group))+
+  geom_jitter()
+
+#=====================================================================================
+#  Code chunk 6
+
+#=====================================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+####4.提取相关的基因表达，并找出差异表达的基因
+
+save(count_matrix,file = "RNAseq_count_breast_TCGA.Rdata")
+
+
+library(edgeR)
+##4.1加载表达矩阵，前面列是High组，后面是low组
+###4.2.1先做免疫评分的差异分析
+head(high_immune_group)
+immune_h<-substr(high_immune_group$sample_id,1,15)
+immune_l<-substr(low_immune_group$sample_id,1,15)
+class(immune_h)
+count_matrix1<-count_matrix
+colnames(count_matrix1)<-substr(colnames(count_matrix),1,15)
+count_matrix1<-as.matrix(count_matrix1)
+freq1<-table(colnames(count_matrix1)) ##检查样本名中是否有重复
+names(freq1[freq1>1]) 
+count_matrix1<-count_matrix1[,!duplicated(colnames(count_matrix1))]#去掉重复的
+
+table(immune_h%in%colnames(count_matrix1))##发现有的样本名原始数据中没有，故要剔除没有的一部分
+table(colnames(count_matrix1)%in%immune_h)
+
+immu_h_sample<-immune_h[immune_h%in%colnames(count_matrix1)]##找出免疫评分表达高组的样本在原始数据中存在的样本名
+immu_l_sample<-immune_l[immune_l%in%colnames(count_matrix1)]##找出免疫评分表低高组的样本在原始数据中存在的样本名
+
+length(unique(colnames(count_matrix1)))
+immu_express_group<-cbind(count_matrix1[,immu_h_sample],count_matrix1[,immu_l_sample])
+
+##4.2.2表达矩阵弄好了，现在分组，刚才建立矩阵时，前面478列是high组，后面460是低组。
+group<-rep(c("high","low"),c(478,460))
+cdata<-data.frame(group=as.factor(group))
+rownames(cdata)<-colnames(immu_express_group)
+##4.2.3设计DGElist
+d<-DGEList(count=immu_express_group,group = cdata$group)
+
+##4.2.4因为count数据中很多基因没表达，故需要进行数据过滤。可选用将count转换成CPM值
+keep_gene<-rowSums(cpm(d)>1)>=2
+table(keep_gene)
+d<-d[keep_gene,keep.lib.size=F]
+
+##4.2.5计算 
+design<-model.matrix(~cdata$group)
+d<-calcNormFactors(d) ##计算进行normalized的因子
+#4.2.6根据design进行拟合分析,构建实验，评估全部样本和分组样本的离散量
+d<-estimateGLMCommonDisp(d,design)
+d<-estimateGLMTrendedDisp(d,design)
+d<-estimateGLMTagwiseDisp(d,design)
+#4.2.7计算差异表达
+fit<-glmFit(d,design)
+et<-glmLRT(fit,coef = 2)##2代表后面组比上前面组，1代表前面和后面相比.但是如果用1，发现所有的差异基因都有意义，解释不清，不懂？？？
+##后来发现系统默认是2，coef = 2写进去和不写进去，结果一样。但写1则不行。
+et2<-glmLRT(fit)
+##4.2.8提取差异表达结果
+edgeR_result<-topTags(et,n=Inf)$table
+edgeR_result$adjpvalue<-p.adjust(edgeR_result$PValue,method = "BH")
+###4.2.9提取logFC绝对值大于2，FDR<0.001
+diff_immunescore<-edgeR_result[abs(edgeR_result$logFC)>2&edgeR_result$FDR<0.001,]
+##保存结果
+save(edgeR_result,diff_immunescore,immu_express_group,file = "edger_immunescore_result.Rdata")
+
+cell<-read.delim(file = "D:\\大数据和原始数据资料\\数据分析资料\\mRNA expression (RNAseq)_ RAC2.txt")
+cell1<-t(cell)
+View(cell1)
+cell2<-na.omit(cell1)
+View(cell2)
+colnames(cell2)<-"RAC2"
+cell2<-as.data.frame(cell2)
+cell2$cell<-rownames(cell2)
+cell3<-cell2[-1,]
+breast<-detect(cell3$cell,"BERAST")
+rlang::last_error()
+breast<-grep("BREAST",cell3$cell)
+cell4<-cell3[breast,]
+setwd("D:\\大数据和原始数据资料\\数据分析资料")
+save(cell4,file="RAC2_cell.Rdata")
